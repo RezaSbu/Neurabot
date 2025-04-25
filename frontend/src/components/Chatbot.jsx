@@ -16,9 +16,10 @@ function Chatbot() {
     const trimmedMessage = newMessage.trim();
     if (!trimmedMessage || isLoading) return;
 
-    setMessages(draft => [...draft,
+    setMessages(draft => [
+      ...draft,
       { role: 'user', content: trimmedMessage },
-      { role: 'assistant', content: '', sources: [], loading: true }
+      { role: 'assistant', content: '', sources: [], loading: true },
     ]);
     setNewMessage('');
 
@@ -49,18 +50,14 @@ function Chatbot() {
   }
 
   return (
-    <div className='relative grow flex flex-col gap-6 pt-6'>
+    <div className="flex flex-col h-[550px] overflow-hidden">
       {messages.length === 0 && (
-        <div className='mt-3 font-urbanist text-primary-blue text-xl font-light space-y-2'>
+        <div className="p-4 font-urbanist text-primary-blue text-sm font-light space-y-2">
           <p>👋 Welcome!</p>
-          <p>I am powered by the latest technology reports from leading institutions like the World Bank, the World Economic Forum, McKinsey, Deloitte and the OECD.</p>
-          <p>Ask me anything about the latest technology trends.</p>
+          <p>Ask me about the latest technology trends.</p>
         </div>
       )}
-      <ChatMessages
-        messages={messages}
-        isLoading={isLoading}
-      />
+      <ChatMessages messages={messages} isLoading={isLoading} />
       <ChatInput
         newMessage={newMessage}
         isLoading={isLoading}

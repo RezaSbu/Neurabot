@@ -1,3 +1,4 @@
+@import url('https://fonts.googleapis.com/css2?family=Vazirmatn&display=swap');
 @import url('https://fonts.googleapis.com/css2?family=Urbanist:wght@100..900&display=swap');
 @import url('https://fonts.googleapis.com/css2?family=Open+Sans:wght@300;400;600;700&display=swap');
 
@@ -6,8 +7,11 @@
 @tailwind utilities;
 
 @layer base {
-  body, html, #root {
-    @apply text-main-text h-full;
+  html, body, #root {
+    @apply h-full text-main-text;
+    direction: rtl; /* راست‌چین شدن کل سایت */
+    font-family: 'Vazirmatn', 'Urbanist', 'Open Sans', sans-serif;
+    background-color: #fdfdfd;
   }
 
   ::-webkit-scrollbar {
@@ -33,15 +37,15 @@
   }
 
   .markdown-container p {
-    @apply mb-5;
+    @apply mb-5 text-right leading-8; /* راست‌چین + فاصله خطی */
   }
 
   .markdown-container h1, h2, h3, h4, h5, h6 {
-    @apply font-bold mb-5;
+    @apply font-bold mb-5 text-right;
   }
 
   .markdown-container li {
-    @apply mb-3;
+    @apply mb-3 text-right;
   }
 
   .markdown-container li:last-child {
@@ -49,14 +53,48 @@
   }
 
   .markdown-container ol {
-    @apply list-decimal mx-0 mt-0 mb-5 pl-8;
+    @apply list-decimal mx-0 mt-0 mb-5 pr-8 text-right;
   }
 
   .markdown-container ul {
-    @apply list-disc mx-0 mt-0 mb-5 pl-8;
+    @apply list-disc mx-0 mt-0 mb-5 pr-8 text-right;
   }
 
   .markdown-container > :last-child {
     @apply mb-0;
+  }
+
+  /* استایل‌های ویجت */
+  .chat-widget {
+    @apply fixed bottom-16 right-4 w-96 max-h-[600px] bg-white rounded-lg shadow-xl z-50 flex flex-col;
+  }
+
+  /* استایل دکمه شناور */
+  .chat-button {
+    @apply fixed bottom-4 right-4 z-50 p-3 bg-primary-blue rounded-full shadow-lg hover:bg-primary-blue/80 transition;
+  }
+
+  /* استایل‌های داخلی چت‌بات در ویجت */
+  .chat-container {
+    @apply flex flex-col h-full overflow-hidden;
+  }
+
+  /* اسکرول‌پذیر کردن پیام‌ها */
+  .chat-messages {
+    @apply grow overflow-y-auto p-2;
+  }
+
+  /* تنظیمات بیشتر برای راست‌چین بودن */
+  .markdown-container p,
+  .markdown-container h1,
+  .markdown-container h2,
+  .markdown-container h3,
+  .markdown-container h4,
+  .markdown-container h5,
+  .markdown-container h6,
+  .markdown-container li,
+  .markdown-container ol,
+  .markdown-container ul {
+    @apply text-right;
   }
 }

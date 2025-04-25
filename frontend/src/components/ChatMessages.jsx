@@ -6,30 +6,57 @@ import errorIcon from '@/assets/images/error.svg';
 
 function ChatMessages({ messages, isLoading }) {
   const scrollContentRef = useAutoScroll(isLoading);
-  
+
   return (
-    <div ref={scrollContentRef} className='grow space-y-4'>
+    <div ref={scrollContentRef} className="chat-messages grow space-y-4 px-2 overflow-y-auto">
       {messages.map(({ role, content, loading, error }, idx) => (
-        <div key={idx} className={`flex items-start gap-4 py-4 px-3 rounded-xl ${role === 'user' ? 'bg-primary-blue/10' : ''}`}>
+        <div
+          key={idx}
+          className={`flex flex-row-reverse items-start gap-4 py-3 px-2 rounded-xl ${
+            role === 'user' ? 'bg-primary-blue/10' : ''
+          }`}
+          dir="rtl"
+        >
           {role === 'user' && (
             <img
-              className='h-[26px] w-[26px] shrink-0'
+              className="h-[20px] w-[20px] shrink-0"
               src={userIcon}
-              alt='user'
+              alt="user"
             />
           )}
-          <div>
-            <div className='markdown-container'>
-              {(loading && !content) ? <Spinner />
-                : (role === 'assistant')
-                  ? <Markdown>{content}</Markdown>
-                  : <div className='whitespace-pre-line'>{content}</div>
-              }
+          <div className="flex flex-col text-right text-sm">
+            <div className="markdown-container">
+              {loading && !content ? (
+                <Spinner />
+              ) : role === 'assistant' ? (
+                <Markdown
+                  components={{
+                    a: ({ href, children }) => (
+                      <a
+                        href={href}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-primary-blue underline hover:text-primary-blue/80"
+                      >
+                        {children}
+                      </a>
+                    ),
+                  }}
+                >
+                  {content}
+                </Markdown>
+              ) : (
+                <div className="whitespace-pre-line">{content}</div>
+              )}
             </div>
             {error && (
-              <div className={`flex items-center gap-1 text-sm text-error-red ${content && 'mt-2'}`}>
-                <img className='h-5 w-5' src={errorIcon} alt='error' />
-                <span>Error generating the response</span>
+              <div
+                className={`flex items-center gap-1 text-xs text-error-red ${
+                  content && 'mt-1'
+                }`}
+              >
+                <img className="h-4 w-4" src={errorIcon} alt="error" />
+                <span>خطا در تولید پاسخ 🛑</span>
               </div>
             )}
           </div>
