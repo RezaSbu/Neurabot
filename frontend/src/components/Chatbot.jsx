@@ -53,8 +53,8 @@ function Chatbot() {
     <div className="flex flex-col h-[550px] overflow-hidden">
       {messages.length === 0 && (
         <div className="p-4 font-urbanist text-primary-blue text-sm font-light space-y-2">
-          <p>👋 Welcome!</p>
-          <p>Ask me about the latest technology trends.</p>
+          <p>👋 سلام!</p>
+          <p>سوالتو بپرس آنلاین پاسخگو هستیم. </p>
         </div>
       )}
       <ChatMessages messages={messages} isLoading={isLoading} />
