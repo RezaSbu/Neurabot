@@ -1,5 +1,11 @@
 import useAutosize from '@/hooks/useAutosize';
-import sendIcon from '@/assets/images/send.svg';
+
+const SendIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+    <line x1="22" y1="2" x2="11" y2="13" />
+    <polygon points="22 2 15 22 11 13 2 9 22 2" />
+  </svg>
+);
 
 function ChatInput({ newMessage, isLoading, setNewMessage, submitNewMessage }) {
   const textareaRef = useAutosize(newMessage);
@@ -12,11 +18,11 @@ function ChatInput({ newMessage, isLoading, setNewMessage, submitNewMessage }) {
   }
 
   return (
-    <div className="sticky bottom-0 shrink-0 bg-white py-2 px-3">
-      <div className="p-1 bg-primary-blue/35 rounded-2xl z-50 font-mono">
-        <div className="pr-0.5 bg-white relative shrink-0 rounded-2xl overflow-hidden ring-primary-blue ring-1 focus-within:ring-2 transition-all">
+    <div className="sticky bottom-0 bg-white py-1 px-2">
+      <div className="p-1 bg-gray-100 rounded-xl">
+        <div className="bg-white relative rounded-xl ring-1 ring-gray-300">
           <textarea
-            className="block w-full max-h-[100px] py-1.5 px-3 pr-10 bg-white rounded-2xl resize-none placeholder:text-primary-blue placeholder:text-sm focus:outline-none text-sm"
+            className="block w-full max-h-[80px] py-1 px-2 pr-8 bg-white rounded-xl resize-none placeholder:text-gray-500 placeholder:text-sm text-sm"
             ref={textareaRef}
             rows="1"
             value={newMessage}
@@ -24,10 +30,10 @@ function ChatInput({ newMessage, isLoading, setNewMessage, submitNewMessage }) {
             onKeyDown={handleKeyDown}
           />
           <button
-            className="absolute top-1/2 -translate-y-1/2 right-2 p-1 rounded-md hover:bg-primary-blue/20"
+            className="absolute top-1/2 -translate-y-1/2 right-1 p-1"
             onClick={submitNewMessage}
           >
-            <img src={sendIcon} alt="send" className="w-5 h-5" />
+            <SendIcon />
           </button>
         </div>
       </div>

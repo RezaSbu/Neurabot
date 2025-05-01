@@ -1,29 +1,36 @@
+import { memo, useMemo } from 'react';
 import Markdown from 'react-markdown';
 import useAutoScroll from '@/hooks/useAutoScroll';
 import Spinner from '@/components/Spinner';
-import userIcon from '@/assets/images/user.svg';
-import errorIcon from '@/assets/images/error.svg';
+
+const UserIcon = () => (
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+    <circle cx="12" cy="7" r="4" />
+  </svg>
+);
+
+const ErrorIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="red">
+    <circle cx="12" cy="12" r="10" />
+    <path d="M12 8v4" />
+    <path d="M12 16h.01" />
+  </svg>
+);
 
 function ChatMessages({ messages, isLoading }) {
-  const scrollContentRef = useAutoScroll(isLoading);
+  const scrollContentRef = useAutoScroll(messages);
+  const displayedMessages = useMemo(() => messages.slice(-15), [messages]);
 
   return (
-    <div ref={scrollContentRef} className="chat-messages grow space-y-4 px-2 overflow-y-auto">
-      {messages.map(({ role, content, loading, error }, idx) => (
+    <div ref={scrollContentRef} className="chat-messages">
+      {displayedMessages.map(({ role, content, loading, error }, idx) => (
         <div
           key={idx}
-          className={`flex flex-row-reverse items-start gap-4 py-3 px-2 rounded-xl ${
-            role === 'user' ? 'bg-primary-blue/10' : ''
-          }`}
+          className={`chat-message ${role === 'user' ? 'chat-message-user' : 'chat-message-assistant'}`}
           dir="rtl"
         >
-          {role === 'user' && (
-            <img
-              className="h-[20px] w-[20px] shrink-0"
-              src={userIcon}
-              alt="user"
-            />
-          )}
+          {role === 'user' && <UserIcon />}
           <div className="flex flex-col text-right text-sm">
             <div className="markdown-container">
               {loading && !content ? (
@@ -36,7 +43,7 @@ function ChatMessages({ messages, isLoading }) {
                         href={href}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="text-primary-blue underline hover:text-primary-blue/80"
+                        className="text-primary-blue underline"
                       >
                         {children}
                       </a>
@@ -50,12 +57,8 @@ function ChatMessages({ messages, isLoading }) {
               )}
             </div>
             {error && (
-              <div
-                className={`flex items-center gap-1 text-xs text-error-red ${
-                  content && 'mt-1'
-                }`}
-              >
-                <img className="h-4 w-4" src={errorIcon} alt="error" />
+              <div className={`flex items-center gap-1 text-xs text-error-red ${content && 'mt-1'}`}>
+                <ErrorIcon />
                 <span>خطا در تولید پاسخ 🛑</span>
               </div>
             )}
@@ -66,4 +69,4 @@ function ChatMessages({ messages, isLoading }) {
   );
 }
 
-export default ChatMessages;
+export default memo(ChatMessages);

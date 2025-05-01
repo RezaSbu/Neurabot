@@ -12,11 +12,11 @@ async function createChat() {
   return data;
 }
 
-async function sendChatMessage(chatId, message) {
+async function sendChatMessage(chatId, message, recentMessages = []) {
   const res = await fetch(BASE_URL + `/chats/${chatId}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message })
+    body: JSON.stringify({ message, recentMessages })
   });
   if (!res.ok) {
     return Promise.reject({ status: res.status, data: await res.json() });
