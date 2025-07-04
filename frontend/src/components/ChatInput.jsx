@@ -28,6 +28,7 @@ function ChatInput({ newMessage, isLoading, setNewMessage, submitNewMessage }) {
             value={newMessage}
             onChange={e => setNewMessage(e.target.value)}
             onKeyDown={handleKeyDown}
+            maxLength={5000} // حداکثر 5000 کاراکتر
           />
           <button
             className="absolute top-1/2 -translate-y-1/2 right-1 p-1"
@@ -36,6 +37,11 @@ function ChatInput({ newMessage, isLoading, setNewMessage, submitNewMessage }) {
             <SendIcon />
           </button>
         </div>
+        {newMessage.length > 4900 && (
+          <p className="text-xs text-red-500 mt-1 text-right">
+            {5000 - newMessage.length} کاراکتر باقی‌مانده
+          </p>
+        )}
       </div>
     </div>
   );

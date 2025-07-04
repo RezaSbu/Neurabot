@@ -9,7 +9,19 @@ function Chatbot() {
   const [chatId, setChatId] = useState(() => localStorage.getItem('chatId') || null);
   const [messages, setMessages] = useImmer(() => {
     const savedMessages = localStorage.getItem('messages');
-    return savedMessages ? JSON.parse(savedMessages).slice(-10) : []; // محدود به 10 پیام
+    const savedTime = localStorage.getItem('messagesSavedTime');
+    const halfHour = 30 * 60 * 1000; // نیم ساعت به میلی‌ثانیه
+
+    // بررسی زمان ذخیره
+    if (savedMessages && savedTime && Date.now() - parseInt(savedTime) < halfHour) {
+      return JSON.parse(savedMessages).slice(-10); // محدود به 10 پیام
+    } else {
+      // پاک کردن اگر زمان گذشته باشد
+      localStorage.removeItem('messages');
+      localStorage.removeItem('chatId');
+      localStorage.removeItem('messagesSavedTime');
+      return [];
+    }
   });
   const [newMessage, setNewMessage] = useState('');
   const streamRef = useRef(null);
@@ -17,7 +29,7 @@ function Chatbot() {
 
   const isLoading = messages.length && messages[messages.length - 1].loading;
 
-  // ذخیره messages با بهینه‌سازی
+  // ذخیره messages با زمان
   useEffect(() => {
     if (!shouldSaveToLocalStorage.current) return;
 
@@ -26,6 +38,7 @@ function Chatbot() {
     }
     try {
       localStorage.setItem('messages', JSON.stringify(messages));
+      localStorage.setItem('messagesSavedTime', Date.now().toString()); // ذخیره زمان
     } catch (e) {
       console.warn('Failed to save messages to localStorage:', e);
     }
@@ -53,6 +66,7 @@ function Chatbot() {
     setChatId(null);
     localStorage.removeItem('messages');
     localStorage.removeItem('chatId');
+    localStorage.removeItem('messagesSavedTime');
     if (streamRef.current) {
       streamRef.current.cancel();
       streamRef.current = null;

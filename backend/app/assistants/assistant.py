@@ -8,7 +8,7 @@ from app.assistants.prompts import MAIN_SYSTEM_PROMPT, RAG_SYSTEM_PROMPT
 from app.utils.sse_stream import SSEStream
 
 class RAGAssistant:
-    def __init__(self, chat_id, rdb, history_size=4, max_tool_calls=3):
+    def __init__(self, chat_id, rdb, history_size=15, max_tool_calls=3):
         self.chat_id = chat_id
         self.rdb = rdb
         self.sse_stream = None
@@ -80,3 +80,10 @@ class RAGAssistant:
         self.sse_stream = SSEStream()
         asyncio.create_task(self._handle_conversation_task(message))
         return self.sse_stream
+
+
+
+
+
+
+

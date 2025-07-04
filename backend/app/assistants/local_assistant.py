@@ -7,7 +7,7 @@ from app.assistants.tools import QueryKnowledgeBaseTool
 from app.assistants.prompts import MAIN_SYSTEM_PROMPT, RAG_SYSTEM_PROMPT
 
 class LocalRAGAssistant:
-    def __init__(self, rdb, history_size=4, max_tool_calls=3, log_tool_calls=True, log_tool_results=False):
+    def __init__(self, rdb, history_size=15, max_tool_calls=3, log_tool_calls=True, log_tool_results=False):
         self.console = Console()
         self.rdb = rdb
         self.chat_history = []
@@ -81,3 +81,8 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+
+
+
+

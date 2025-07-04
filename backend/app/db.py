@@ -136,3 +136,5 @@ async def clear_db(rdb):
             print(f"Deleted index '{index_name}' and all associated documents")
         except Exception as e:
             print(f"Index '{index_name}': {e}")
+
+
