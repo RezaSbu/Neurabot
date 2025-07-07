@@ -53,4 +53,3 @@ class QueryKnowledgeBaseTool(BaseModel):
             results.append(f"SOURCE: {doc_names[idx]}\n\"\"\"\n{texts[idx]}\n\"\"\"")
 
         return "\n\n---\n\n".join(results) + "\n\n---"
-
