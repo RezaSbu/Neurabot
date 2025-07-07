@@ -1,55 +1,67 @@
 from pydantic import BaseModel, Field
-from app.db import search_vector_db, get_all_vectors
+from typing import Optional
+from app.db import get_all_vectors
 from app.openai import get_embedding
 import numpy as np
 from numpy.linalg import norm
 
 class QueryKnowledgeBaseTool(BaseModel):
-    """Query and filter knowledge base for product search."""
-    query_input: str = Field(description='User search query about motorcycle products')
+    query_input: str = Field(..., description="User query")
+    query_category: Optional[str] = Field(None, description="Category of product")
+    price_min: Optional[float] = Field(None)
+    price_max: Optional[float] = Field(None)
+    brand: Optional[str] = Field(None)
 
     async def __call__(self, rdb):
         query_vector = await get_embedding(self.query_input)
         all_chunks = await get_all_vectors(rdb)
 
-        q = self.query_input.lower().strip()
-        query_words = set(q.split())
-
-        # جستجوی تطبیقی قوی‌تر
         filtered_chunks = []
         for chunk in all_chunks:
             meta = chunk.get("metadata", {})
-            text_fields = [
-                chunk.get("text", ""),
-                meta.get("name", ""),
-                meta.get("brand", ""),
-                meta.get("category", ""),
-                meta.get("search_text", "")
-            ]
-            combined = " ".join(text_fields).lower()
-            if any(word in combined for word in query_words):
-                filtered_chunks.append(chunk)
 
-        # fallback اگه خیلی کم بود
+            # فیلتر دسته
+            if self.query_category and meta.get("category") != self.query_category:
+                continue
+
+            # فیلتر برند
+            if self.brand and self.brand.lower() not in meta.get("brand", "").lower():
+                continue
+
+            # فیلتر قیمت
+            price = meta.get("price_numeric", 0)
+            if self.price_min and price < self.price_min:
+                continue
+            if self.price_max and price > self.price_max:
+                continue
+
+            filtered_chunks.append(chunk)
+
+        # fallback در صورت کم بودن نتایج
         if len(filtered_chunks) < 3:
             filtered_chunks = all_chunks
 
-        vectors = [c["vector"] for c in filtered_chunks]
-        texts = [c["text"] for c in filtered_chunks]
-        doc_names = [c["doc_name"] for c in filtered_chunks]
-
+        # محاسبه similarity
         scores = []
-        for idx, v in enumerate(vectors):
+        for idx, c in enumerate(filtered_chunks):
             try:
-                sim = np.dot(query_vector, v) / (norm(query_vector) * norm(v))
+                sim = np.dot(query_vector, c["vector"]) / (norm(query_vector) * norm(c["vector"]))
             except:
                 sim = 0
             scores.append((sim, idx))
 
-        # top-k نهایی
+        # انتخاب top-5 نتیجه
         top_k = sorted(scores, reverse=True)[:5]
         results = []
         for score, idx in top_k:
-            results.append(f"SOURCE: {doc_names[idx]}\n\"\"\"\n{texts[idx]}\n\"\"\"")
+            chunk = filtered_chunks[idx]
+            meta = chunk.get("metadata", {})
+            text_block = chunk['text']
+            product_link = meta.get("link", "")
+            product_name = meta.get("name", "محصول")
+
+            results.append(
+                f"SOURCE: {chunk['doc_name']}\n\"\"\"\n{text_block}\n\nلینک محصول: {product_link}\nنام محصول: {product_name}\n\"\"\""
+            )
 
         return "\n\n---\n\n".join(results) + "\n\n---"
