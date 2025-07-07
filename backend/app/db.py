@@ -1,5 +1,6 @@
 import json
 import numpy as np
+from time import time
 from redis.asyncio import Redis
 from redis.commands.search.field import TextField, VectorField, NumericField
 from redis.commands.search.indexDefinition import IndexDefinition, IndexType
@@ -12,10 +13,14 @@ VECTOR_IDX_PREFIX = 'vector:'
 CHAT_IDX_NAME = 'idx:chat'
 CHAT_IDX_PREFIX = 'chat:'
 
+
+# اتصال به Redis
 def get_redis():
     return Redis(host=settings.REDIS_HOST, port=settings.REDIS_PORT)
 
-# VECTORS
+
+# ------------------------ VECTORS ------------------------
+
 async def create_vector_index(rdb):
     schema = (
         TextField('$.chunk_id', no_stem=True, as_name='chunk_id'),
@@ -70,7 +75,8 @@ async def get_all_vectors(rdb):
     return [json.loads(doc.json) for doc in res.docs]
 
 
-# CHATS
+# ------------------------ CHATS ------------------------
+
 async def create_chat_index(rdb):
     try:
         schema = (
@@ -84,13 +90,22 @@ async def create_chat_index(rdb):
     except Exception as e:
         print(f"Error creating chat index '{CHAT_IDX_NAME}': {e}")
 
-async def create_chat(rdb, chat_id, created):
+# ✅ نسخه نهایی با تنظیم TTL پیش‌فرض 7 روز (604800 ثانیه)
+async def create_chat(rdb, chat_id, created, ttl_seconds=604800):
     chat = {'id': chat_id, 'created': created, 'messages': []}
-    await rdb.json().set(CHAT_IDX_PREFIX + chat_id, Path.root_path(), chat)
+    key = CHAT_IDX_PREFIX + chat_id
+    await rdb.json().set(key, Path.root_path(), chat)
+    await rdb.expire(key, ttl_seconds)
     return chat
 
+# ✅ افزودن created در صورت نبود
 async def add_chat_messages(rdb, chat_id, messages):
-    await rdb.json().arrappend(CHAT_IDX_PREFIX + chat_id, '$.messages', *messages)
+    timestamped = []
+    for msg in messages:
+        if 'created' not in msg:
+            msg['created'] = int(time())
+        timestamped.append(msg)
+    await rdb.json().arrappend(CHAT_IDX_PREFIX + chat_id, '$.messages', *timestamped)
 
 async def chat_exists(rdb, chat_id):
     return await rdb.exists(CHAT_IDX_PREFIX + chat_id)
@@ -112,18 +127,17 @@ async def get_all_chats(rdb):
     return [json.loads(doc.json) for doc in res.docs]
 
 
-# GENERAL
+# ------------------------ GENERAL ------------------------
+
 async def setup_db(rdb):
-    # Create the vector index (deleting the existing one if present)
     try:
         await rdb.ft(VECTOR_IDX_NAME).dropindex(delete_documents=True)
         print(f"Deleted vector index '{VECTOR_IDX_NAME}' and all associated documents")
-    except Exception as e:
+    except Exception:
         pass
     finally:
         await create_vector_index(rdb)
 
-    # Make sure that the chat index exists, and create it if it doesn't
     try:
         await rdb.ft(CHAT_IDX_NAME).info()
     except Exception:
@@ -136,5 +150,3 @@ async def clear_db(rdb):
             print(f"Deleted index '{index_name}' and all associated documents")
         except Exception as e:
             print(f"Index '{index_name}': {e}")
-
-
