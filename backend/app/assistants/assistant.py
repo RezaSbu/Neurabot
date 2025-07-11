@@ -6,6 +6,8 @@ from openai import pydantic_function_tool
 from time import time
 import asyncio
 from app.utils.sse_stream import SSEStream
+from app.db import get_last_messages  # ← اینو اضافه کن
+
 
 class RAGAssistant:
     def __init__(self, chat_id, rdb, history_size=30, max_tool_calls=3):
@@ -45,7 +47,7 @@ class RAGAssistant:
             return {"content": "متأسفانه محصولی مطابق درخواست شما در پایگاه داده پیدا نشد."}
 
     async def _run_step(self, message):
-        history = await get_chat_messages(self.rdb, self.chat_id, last_n=self.history_size)
+        history = await get_last_messages(self.rdb, self.chat_id, last_n=self.history_size)
         history.append({'role': 'user', 'content': message})
 
         assistant_msg = await self._generate_chat_response(

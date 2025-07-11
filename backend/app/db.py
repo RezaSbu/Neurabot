@@ -46,11 +46,13 @@ async def create_vector_index(rdb):
     except Exception as e:
         print(f"Error creating vector index '{VECTOR_IDX_NAME}': {e}")
 
+
 async def add_chunks_to_vector_db(rdb, chunks):
     async with rdb.pipeline(transaction=True) as pipe:
         for chunk in chunks:
             pipe.json().set(VECTOR_IDX_PREFIX + chunk['chunk_id'], Path.root_path(), chunk)
         await pipe.execute()
+
 
 async def search_vector_db(rdb, query_vector, top_k=settings.VECTOR_SEARCH_TOP_K):
     query = (
@@ -68,6 +70,7 @@ async def search_vector_db(rdb, query_vector, top_k=settings.VECTOR_SEARCH_TOP_K
         'text': d.text,
         'doc_name': d.doc_name
     } for d in res.docs]
+
 
 async def get_all_vectors(rdb):
     count = await rdb.ft(VECTOR_IDX_NAME).search(Query('*').paging(0, 0))
@@ -90,7 +93,7 @@ async def create_chat_index(rdb):
     except Exception as e:
         print(f"Error creating chat index '{CHAT_IDX_NAME}': {e}")
 
-# ✅ نسخه نهایی با تنظیم TTL پیش‌فرض 7 روز (604800 ثانیه)
+
 async def create_chat(rdb, chat_id, created, ttl_seconds=604800):
     chat = {'id': chat_id, 'created': created, 'messages': []}
     key = CHAT_IDX_PREFIX + chat_id
@@ -98,7 +101,7 @@ async def create_chat(rdb, chat_id, created, ttl_seconds=604800):
     await rdb.expire(key, ttl_seconds)
     return chat
 
-# ✅ افزودن created در صورت نبود
+
 async def add_chat_messages(rdb, chat_id, messages):
     timestamped = []
     for msg in messages:
@@ -107,18 +110,26 @@ async def add_chat_messages(rdb, chat_id, messages):
         timestamped.append(msg)
     await rdb.json().arrappend(CHAT_IDX_PREFIX + chat_id, '$.messages', *timestamped)
 
+
 async def chat_exists(rdb, chat_id):
     return await rdb.exists(CHAT_IDX_PREFIX + chat_id)
 
-async def get_chat_messages(rdb, chat_id, last_n=None):
-    if last_n is None:
-        messages = await rdb.json().get(CHAT_IDX_PREFIX + chat_id, '$.messages[*]')
-    else:
-        messages = await rdb.json().get(CHAT_IDX_PREFIX + chat_id, f'$.messages[-{last_n}:]')
+
+# ✅ فقط آخرین N پیام (برای GPT)
+async def get_last_messages(rdb, chat_id, last_n):
+    messages = await rdb.json().get(CHAT_IDX_PREFIX + chat_id, f'$.messages[-{last_n}:]')
     return [{'role': m['role'], 'content': m['content']} for m in messages] if messages else []
+
+
+# ✅ کل پیام‌ها (برای UI / گزارش)
+async def get_all_messages(rdb, chat_id):
+    messages = await rdb.json().get(CHAT_IDX_PREFIX + chat_id, '$.messages[*]')
+    return [{'role': m['role'], 'content': m['content']} for m in messages] if messages else []
+
 
 async def get_chat(rdb, chat_id):
     return await rdb.json().get(chat_id)
+
 
 async def get_all_chats(rdb):
     q = Query('*').sort_by('created', asc=False)
@@ -143,6 +154,7 @@ async def setup_db(rdb):
     except Exception:
         await create_chat_index(rdb)
 
+
 async def clear_db(rdb):
     for index_name in [VECTOR_IDX_NAME, CHAT_IDX_NAME]:
         try:
@@ -150,4 +162,3 @@ async def clear_db(rdb):
             print(f"Deleted index '{index_name}' and all associated documents")
         except Exception as e:
             print(f"Index '{index_name}': {e}")
-

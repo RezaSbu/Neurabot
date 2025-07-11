@@ -5,6 +5,8 @@ from app.db import get_redis
 from app.openai import chat_stream
 from app.assistants.tools import QueryKnowledgeBaseTool
 from app.assistants.prompts import MAIN_SYSTEM_PROMPT, RAG_SYSTEM_PROMPT
+from app.db import get_redis, get_last_messages
+
 
 class LocalRAGAssistant:
     def __init__(self, history_size=30, max_tool_calls=3, log_tool_calls=True, log_tool_results=True):
@@ -32,7 +34,7 @@ class LocalRAGAssistant:
         async with get_redis() as rdb:
             self.console.print('NeuraQueen در خدمت شماست! 😊 بفرمایید سؤال بعدی؟', style='green')
             while True:
-                chat_hist = self.chat_history[-self.history_size:]
+                chat_hist = await get_last_messages(rdb, chat_id="local", last_n=self.history_size)
                 user_input = input('\n> ')
                 self.console.print()
                 if user_input.strip().lower() in ["/exit", "خروج"]:
