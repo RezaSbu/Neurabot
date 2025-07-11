@@ -22,13 +22,14 @@ function ChatInput({ newMessage, isLoading, setNewMessage, submitNewMessage }) {
       <div className="p-1 bg-gray-100 rounded-xl">
         <div className="bg-white relative rounded-xl ring-1 ring-gray-300">
           <textarea
-            className="block w-full max-h-[80px] py-1 px-2 pr-8 bg-white rounded-xl resize-none placeholder:text-gray-500 placeholder:text-sm text-sm"
+            className="block w-full max-h-[100px] py-2 px-4 pr-10 bg-white rounded-xl resize-none placeholder:text-gray-500 placeholder:text-base text-gray-800 text-base focus:ring-2 focus:ring-blue-500 transition duration-200"
             ref={textareaRef}
             rows="1"
             value={newMessage}
             onChange={e => setNewMessage(e.target.value)}
             onKeyDown={handleKeyDown}
-            maxLength={5000} // حداکثر 5000 کاراکتر
+            placeholder="پیام خود را بنویسید..."
+            maxLength={5000}
           />
           <button
             className="absolute top-1/2 -translate-y-1/2 right-1 p-1"

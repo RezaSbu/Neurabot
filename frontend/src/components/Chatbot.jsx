@@ -126,15 +126,15 @@ function Chatbot() {
   return (
     <div className="flex flex-col h-[550px] overflow-hidden">
       {messages.length === 0 && (
-        <div className="p-4 text-primary-blue text-sm space-y-2">
-          <p>👋 سلام!</p>
-          <p>سوالتو بپرس آنلاین پاسخگو هستیم.</p>
+        <div className="p-5 text-center text-gray-700 text-base space-y-3 bg-gray-50">
+          <p className="text-lg font-semibold">سلام! 😊</p>
+          <p>چطور می‌تونم کمکتون کنم؟ سؤالتون رو بپرسید.</p>
         </div>
       )}
-      <div className="flex justify-between p-2 bg-gray-50">
+      <div className="flex justify-end p-3 bg-gray-50 border-t border-gray-200">
         <button
           onClick={clearChat}
-          className="px-3 py-1 text-sm text-white bg-red-500 rounded-md hover:bg-red-600"
+          className="px-4 py-2 text-sm text-white bg-red-500 rounded-lg hover:bg-red-600 transition duration-200 shadow-sm"
         >
           پاک کردن چت
         </button>
