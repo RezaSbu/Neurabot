@@ -1,14 +1,14 @@
-import asyncio
-from openai import pydantic_function_tool
-from time import time
+from app.assistants.prompts import MAIN_SYSTEM_PROMPT, RAG_SYSTEM_PROMPT
 from app.openai import chat_stream
 from app.db import get_chat_messages, add_chat_messages
 from app.assistants.tools import QueryKnowledgeBaseTool
-from app.assistants.prompts import MAIN_SYSTEM_PROMPT, RAG_SYSTEM_PROMPT
+from openai import pydantic_function_tool
+from time import time
+import asyncio
 from app.utils.sse_stream import SSEStream
 
 class RAGAssistant:
-    def __init__(self, chat_id, rdb, history_size=15, max_tool_calls=3):
+    def __init__(self, chat_id, rdb, history_size=30, max_tool_calls=3):
         self.chat_id = chat_id
         self.rdb = rdb
         self.sse_stream = None
@@ -28,14 +28,21 @@ class RAGAssistant:
             return final.choices[0].message
 
     async def _handle_tool_calls(self, tool_calls, chat_messages):
+        any_result = False
         for call in tool_calls[:self.max_tool_calls]:
             kb_args = call.function.parsed_arguments
             kb_result = await kb_args(self.rdb)
             chat_messages.append({'role': 'tool', 'tool_call_id': call.id, 'content': kb_result})
-        return await self._generate_chat_response(
-            system_message=self.rag_system_message,
-            chat_messages=chat_messages,
-        )
+            if "یافت نشد" not in kb_result:
+                any_result = True
+
+        if any_result:
+            return await self._generate_chat_response(
+                system_message=self.rag_system_message,
+                chat_messages=chat_messages,
+            )
+        else:
+            return {"content": "متأسفانه محصولی مطابق درخواست شما در پایگاه داده پیدا نشد."}
 
     async def _run_step(self, message):
         history = await get_chat_messages(self.rdb, self.chat_id, last_n=self.history_size)
@@ -51,19 +58,19 @@ class RAGAssistant:
         calls = getattr(assistant_msg, 'tool_calls', [])
         if calls:
             history.append({
-    'role': 'assistant',
-    'content': assistant_msg.content or "",
-    'tool_calls': assistant_msg.tool_calls
-})
+                'role': 'assistant',
+                'content': assistant_msg.content or "",
+                'tool_calls': assistant_msg.tool_calls
+            })
             assistant_msg = await self._handle_tool_calls(calls, history)
 
         user_db_msg = {'role': 'user', 'content': message, 'created': int(time())}
         assistant_db_msg = {
             'role': 'assistant',
-            'content': assistant_msg.content or "",  # جلوگیری از None
+            'content': assistant_msg['content'] if isinstance(assistant_msg, dict) else assistant_msg.content or "",
             'tool_calls': [
                 {'name': tc.function.name, 'arguments': tc.function.arguments} for tc in calls
-            ],
+            ] if calls else [],
             'created': int(time())
         }
         await add_chat_messages(self.rdb, self.chat_id, [user_db_msg, assistant_db_msg])

@@ -21,7 +21,6 @@ def load_json_file(path):
         return []
 
 def normalize_budget_range(price_numeric):
-    """نرمال‌سازی budget_range برای جستجوی بهتر"""
     if not isinstance(price_numeric, (int, float)):
         return "unknown"
     if price_numeric < 500_000:
@@ -71,6 +70,9 @@ async def process_docs(docs_dir=settings.DOCS_DIR):
             price_numeric = item.get('price_numeric', 0)
             budget_range = normalize_budget_range(price_numeric)
 
+            features_flat = "، ".join([f"{k}: {v}" for k, v in features.items()])
+            sizes_flat = [v.get("size", "").upper() for v in variations if v.get("size")]
+
             metadata = {
                 'name': item.get('title', 'محصول ناشناس'),
                 'price': item.get('price', 'نامشخص'),
@@ -82,8 +84,10 @@ async def process_docs(docs_dir=settings.DOCS_DIR):
                 'stock': item.get('stock', 'نامشخص'),
                 'attributes': attributes,
                 'features': features,
-                'tags': item.get('tags', []),
+                'features_flat': features_flat.lower(),
+                'sizes_flat': sizes_flat,
                 'variations': variations,
+                'tags': item.get('tags', []),
                 'product_id': item.get('product_id', ''),
                 'image': item.get('image', ''),
                 'description': item.get('description', '')
@@ -162,7 +166,7 @@ async def process_docs(docs_dir=settings.DOCS_DIR):
                 pbar.update(len(batch))
 
     for chunk, vector in zip(chunks, vectors):
-        chunk['vector'] = vector if vector else [0.0] * 1536  # Fallback vector
+        chunk['vector'] = vector if vector else [0.0] * settings.EMBEDDING_DIMENSIONS
 
     return chunks
 
