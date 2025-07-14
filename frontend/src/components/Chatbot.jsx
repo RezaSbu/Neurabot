@@ -7,30 +7,26 @@ import ChatInput from '@/components/ChatInput';
 
 function Chatbot() {
   const [chatId, setChatId] = useState(() => localStorage.getItem('chatId') || null);
-
   const [messages, setMessages] = useImmer(() => {
     const savedMessages = localStorage.getItem('messages');
     const savedTime = localStorage.getItem('messagesSavedTime');
-    const halfHour = 30 * 60 * 1000; // نیم ساعت
+    const halfHour = 30 * 60 * 1000;
 
     if (savedMessages && savedTime && Date.now() - parseInt(savedTime, 10) < halfHour) {
-      // بارگذاری تمام تاریخچه پیام‌ها
       return JSON.parse(savedMessages);
     } else {
-      // پاکسازی اگر بیش از نیم ساعت گذشته باشد
       localStorage.removeItem('messages');
       localStorage.removeItem('chatId');
       localStorage.removeItem('messagesSavedTime');
       return [];
     }
   });
-
   const [newMessage, setNewMessage] = useState('');
   const streamRef = useRef(null);
   const shouldSaveToLocalStorage = useRef(true);
+
   const isLoading = messages.length && messages[messages.length - 1].loading;
 
-  // ذخیره تمام پیام‌ها در localStorage
   useEffect(() => {
     if (!shouldSaveToLocalStorage.current) return;
     try {
@@ -73,14 +69,13 @@ function Chatbot() {
     if (!trimmedMessage || isLoading) return;
 
     shouldSaveToLocalStorage.current = false;
-
     const timestamp = new Date().toISOString();
+
     setMessages(draft => [
       ...draft,
       { role: 'user', content: trimmedMessage, timestamp },
       { role: 'assistant', content: '', sources: [], loading: true, timestamp },
     ]);
-
     setNewMessage('');
 
     let chatIdOrNew = chatId;
@@ -121,7 +116,7 @@ function Chatbot() {
   }
 
   return (
-    <div className="flex flex-col h-[550px] overflow-hidden">
+    <div className="flex flex-col h-full md:h-[550px] overflow-hidden">
       {messages.length === 0 && (
         <div className="p-5 text-center text-gray-700 text-base space-y-3 bg-gray-50">
           <p className="text-lg font-semibold">سلام! 😊</p>
