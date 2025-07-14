@@ -1,12 +1,31 @@
-import { useState } from 'react';
+// frontend/src/App.jsx
+
+import { useState, useEffect } from 'react';
 import Chatbot from '@/components/Chatbot';
+import AdminPanel from '../../Database/frontend/AdminPanel';
 
 function App() {
+  const [isAdminView, setIsAdminView] = useState(false);
   const [isWidgetOpen, setIsWidgetOpen] = useState(false);
 
-  const toggleWidget = () => {
-    setIsWidgetOpen(!isWidgetOpen);
-  };
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('admin') === 'true') {
+      setIsAdminView(true);
+    }
+  }, []);
+
+  if (isAdminView) {
+    return (
+      <div className="min-h-screen bg-gray-100 p-4">
+        <h1 className="text-xl font-bold mb-4">🛠 پنل مدیریت NeuraQueen</h1>
+        <AdminPanel />
+      </div>
+    );
+  }
+
+  // حالت معمولی: چت‌بات شناور
+  const toggleWidget = () => setIsWidgetOpen(!isWidgetOpen);
 
   return (
     <div className="relative min-h-screen">
