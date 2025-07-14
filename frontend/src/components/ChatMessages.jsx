@@ -1,4 +1,4 @@
-import { memo, useMemo } from 'react';
+import { memo, useMemo, useState, useEffect } from 'react';
 import Markdown from 'react-markdown';
 import useAutoScroll from '@/hooks/useAutoScroll';
 import Spinner from '@/components/Spinner';
@@ -19,12 +19,42 @@ const ErrorIcon = () => (
 );
 
 function ChatMessages({ messages, isLoading }) {
-  const scrollContentRef = useAutoScroll(messages);
-  const displayedMessages = useMemo(() => messages.slice(-15), [messages]);
+  // ref برای اسکرول خودکار به پایین
+  const containerRef = useAutoScroll(messages);
+
+  // تعداد پیام‌های قابل نمایش فعلی
+  const [visibleCount, setVisibleCount] = useState(15);
+
+  // برش آخرین visibleCount پیام
+  const displayedMessages = useMemo(
+    () => messages.slice(-visibleCount),
+    [messages, visibleCount]
+  );
+
+  // مدیریت infinite scroll هنگام اسکرول به بالای کانتینر
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+
+    const handleScroll = () => {
+      if (el.scrollTop === 0 && visibleCount < messages.length) {
+        const oldHeight = el.scrollHeight;
+        setVisibleCount(prev => Math.min(prev + 10, messages.length));
+        // بعد از رندر مجدد، حفظ موقعیت اسکرول
+        requestAnimationFrame(() => {
+          const newHeight = el.scrollHeight;
+          el.scrollTop = newHeight - oldHeight;
+        });
+      }
+    };
+
+    el.addEventListener('scroll', handleScroll);
+    return () => el.removeEventListener('scroll', handleScroll);
+  }, [visibleCount, messages.length]);
 
   return (
-    <div ref={scrollContentRef} className="chat-messages">
-      {displayedMessages.map(({ role, content, loading, error }, idx) => (
+    <div ref={containerRef} className="chat-messages">
+      {displayedMessages.map(({ role, content, loading, error, timestamp }, idx) => (
         <div
           key={idx}
           className={`chat-message ${role === 'user' ? 'chat-message-user' : 'chat-message-assistant'}`}
@@ -56,6 +86,15 @@ function ChatMessages({ messages, isLoading }) {
                 <div className="whitespace-pre-line">{content}</div>
               )}
             </div>
+            {/* نمایش تایم‌استمپ */}
+            {timestamp && (
+              <div className="text-xs text-gray-400 self-end mt-1">
+                {new Date(timestamp).toLocaleTimeString('fa-IR', {
+                  hour: '2-digit',
+                  minute: '2-digit',
+                })}
+              </div>
+            )}
             {error && (
               <div className={`flex items-center gap-1 text-xs text-error-red ${content && 'mt-1'}`}>
                 <ErrorIcon />
