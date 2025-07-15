@@ -5,11 +5,13 @@ from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 from app.db import get_redis, create_chat, chat_exists, add_chat_messages
 from app.assistants.assistant import RAGAssistant
+import structlog
+
+logger = structlog.get_logger()
 
 class ChatIn(BaseModel):
     message: str
 
-# گرفتن Redis از تنظیمات
 async def get_rdb():
     rdb = get_redis()
     try:
@@ -19,15 +21,14 @@ async def get_rdb():
 
 router = APIRouter()
 
-# 📌 ساخت چت جدید
 @router.post('/chats')
 async def create_new_chat(rdb = Depends(get_rdb)):
     chat_id = str(uuid4())[:8]
     created = int(time())
     await create_chat(rdb, chat_id, created)
+    logger.info("New chat created", chat_id=chat_id)
     return {'id': chat_id}
 
-# 📌 ارسال پیام به چت و دریافت پاسخ به صورت استریم + ذخیره پیام‌ها
 @router.post('/chats/{chat_id}')
 async def chat(chat_id: str, chat_in: ChatIn):
     rdb = get_redis()
@@ -35,7 +36,6 @@ async def chat(chat_id: str, chat_in: ChatIn):
     if not await chat_exists(rdb, chat_id):
         raise HTTPException(status_code=404, detail=f'Chat {chat_id} does not exist')
 
-    # ✅ ذخیره پیام کاربر با timestamp
     await add_chat_messages(rdb, chat_id, [{
         'role': 'user',
         'content': chat_in.message,
@@ -47,21 +47,21 @@ async def chat(chat_id: str, chat_in: ChatIn):
 
     latest_response = {"content": ""}
 
-    # ✅ استریم پاسخ دستیار و ذخیره پیام نهایی پس از پایان
     async def event_generator():
-        async for event in sse_stream:
-            if isinstance(event.data, dict) and "content" in event.data:
-                latest_response["content"] += event.data["content"]
-            yield event
+        try:
+            async for event in sse_stream:
+                if isinstance(event.data, dict) and "content" in event.data:
+                    latest_response["content"] += event.data["content"]
+                yield event
 
-        # ✅ ذخیره پاسخ دستیار در Redis
-        await add_chat_messages(rdb, chat_id, [{
-            'role': 'assistant',
-            'content': latest_response["content"],
-            'created': int(time())
-        }])
+            await add_chat_messages(rdb, chat_id, [{
+                'role': 'assistant',
+                'content': latest_response["content"],
+                'created': int(time())
+            }])
+            logger.info("Chat message processed", chat_id=chat_id)
+        except Exception as e:
+            logger.error("Error in chat stream", exc_info=True)
+            yield {"data": {"error": str(e)}}
 
     return EventSourceResponse(event_generator(), background=rdb.aclose)
-
-
-

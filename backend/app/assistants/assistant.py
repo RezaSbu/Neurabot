@@ -6,6 +6,9 @@ from openai import pydantic_function_tool
 from time import time
 import asyncio
 from app.utils.sse_stream import SSEStream
+import structlog
+
+logger = structlog.get_logger()
 
 class RAGAssistant:
     def __init__(self, chat_id, rdb, history_size=30, max_tool_calls=3):
@@ -19,13 +22,27 @@ class RAGAssistant:
         self.max_tool_calls = max_tool_calls
 
     async def _generate_chat_response(self, system_message, chat_messages, **kwargs):
-        messages = [system_message, *chat_messages]
-        async with chat_stream(messages=messages, **kwargs) as stream:
-            async for event in stream:
-                if event.type == 'content.delta':
-                    await self.sse_stream.send(event.delta)
-            final = await stream.get_final_completion()
-            return final.choices[0].message
+        try:
+            messages = [system_message, *chat_messages]
+            async with chat_stream(messages=messages, **kwargs) as stream:
+                async for event in stream:
+                    if event.type == 'content.delta':
+                        await self.sse_stream.send(event.delta)
+                final = await stream.get_final_completion()
+                return final.choices[0].message
+        except Exception as e:
+            logger.error("OpenAI error, retrying once", exc_info=True)
+            # Simple fallback: retry once
+            try:
+                async with chat_stream(messages=messages, **kwargs) as stream:
+                    async for event in stream:
+                        if event.type == 'content.delta':
+                            await self.sse_stream.send(event.delta)
+                    final = await stream.get_final_completion()
+                    return final.choices[0].message
+            except:
+                await self.sse_stream.send("❌ مشکلی در ارتباط با سرویس هوش مصنوعی پیش آمد. لطفاً بعداً امتحان کنید.")
+                raise
 
     async def _handle_tool_calls(self, tool_calls, chat_messages):
         any_result = False
@@ -79,8 +96,8 @@ class RAGAssistant:
         try:
             await self._run_step(message)
         except Exception as e:
+            logger.error("Error in RAGAssistant handle", exc_info=True)
             await self.sse_stream.send(f"❌ متأسفانه مشکلی پیش آمد: {e}")
-            print(f"Error in RAGAssistant: {e}")
         finally:
             await self.sse_stream.close()
 

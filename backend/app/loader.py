@@ -7,6 +7,9 @@ from app.utils.splitter import TextSplitter
 from app.openai import get_embeddings, token_size
 from app.db import get_redis, setup_db, add_chunks_to_vector_db
 from app.config import settings
+import structlog
+
+logger = structlog.get_logger()
 
 def batchify(iterable, batch_size):
     for i in range(0, len(iterable), batch_size):
@@ -17,7 +20,7 @@ def load_json_file(path):
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
     except Exception as e:
-        print(f"Error loading JSON file {path}: {e}")
+        logger.error(f"Error loading JSON file {path}", exc_info=True)
         return []
 
 def normalize_budget_range(price_numeric):
@@ -38,11 +41,11 @@ def normalize_budget_range(price_numeric):
 
 async def process_docs(docs_dir=settings.DOCS_DIR):
     docs = []
-    print('\nLoading documents')
+    logger.info('Loading documents')
 
     files = [f for f in os.listdir(docs_dir) if f.endswith('.json')]
     if not files:
-        print(f"No JSON files found in {docs_dir}")
+        logger.warning(f"No JSON files found in {docs_dir}")
         return []
 
     for filename in tqdm(files, desc="Processing files"):
@@ -51,7 +54,7 @@ async def process_docs(docs_dir=settings.DOCS_DIR):
 
         data = load_json_file(file_path)
         if not data or not isinstance(data, list):
-            print(f"Invalid or empty JSON structure in {filename}")
+            logger.warning(f"Invalid or empty JSON structure in {filename}")
             continue
 
         for item in data:
@@ -122,15 +125,15 @@ async def process_docs(docs_dir=settings.DOCS_DIR):
             text_block = "\n".join(text_parts)
             docs.append((item.get('title', 'محصول'), text_block, metadata))
 
-    print(f'Loaded {len(docs)} documents')
+    logger.info(f'Loaded {len(docs)} documents')
 
     if not docs:
-        print("No valid documents to process")
+        logger.warning("No valid documents to process")
         return []
 
     chunks = []
-    text_splitter = TextSplitter(chunk_size=512, chunk_overlap=150)
-    print('\nSplitting documents into chunks')
+    text_splitter = TextSplitter(chunk_size=512, chunk_overlap=150)  # Optimized for Persian
+    logger.info('Splitting documents into chunks')
 
     for doc_name, doc_text, metadata in tqdm(docs, desc="Splitting documents"):
         doc_id = str(uuid4())[:8]
@@ -144,16 +147,16 @@ async def process_docs(docs_dir=settings.DOCS_DIR):
                 'metadata': metadata
             }
             chunks.append(chunk)
-        print(f'{doc_name}: {len(doc_chunks)} chunks')
+        logger.info(f'{doc_name}: {len(doc_chunks)} chunks')
 
     chunk_sizes = [token_size(c['text']) for c in chunks]
-    print(f'\nTotal chunks: {len(chunks)}')
-    print(f'Min chunk size: {min(chunk_sizes)} tokens')
-    print(f'Max chunk size: {max(chunk_sizes)} tokens')
-    print(f'Average chunk size: {round(sum(chunk_sizes)/len(chunks))} tokens')
+    logger.info(f'Total chunks: {len(chunks)}')
+    logger.info(f'Min chunk size: {min(chunk_sizes)} tokens')
+    logger.info(f'Max chunk size: {max(chunk_sizes)} tokens')
+    logger.info(f'Average chunk size: {round(sum(chunk_sizes)/len(chunks))} tokens')
 
     vectors = []
-    print('\nEmbedding chunks')
+    logger.info('Embedding chunks')
     with tqdm(total=len(chunks), desc="Embedding chunks") as pbar:
         for batch in batchify(chunks, batch_size=64):
             try:
@@ -161,7 +164,7 @@ async def process_docs(docs_dir=settings.DOCS_DIR):
                 vectors.extend(batch_vectors)
                 pbar.update(len(batch))
             except Exception as e:
-                print(f"Error embedding batch: {e}")
+                logger.error(f"Error embedding batch: {e}")
                 vectors.extend([None] * len(batch))
                 pbar.update(len(batch))
 
@@ -172,15 +175,15 @@ async def process_docs(docs_dir=settings.DOCS_DIR):
 
 async def load_knowledge_base():
     async with get_redis() as rdb:
-        print('Setting up Redis database')
+        logger.info('Setting up Redis database')
         await setup_db(rdb)
         chunks = await process_docs()
         if chunks:
-            print('\nAdding chunks to vector db')
+            logger.info('Adding chunks to vector db')
             await add_chunks_to_vector_db(rdb, chunks)
-            print('\nKnowledge base loaded')
+            logger.info('Knowledge base loaded')
         else:
-            print('\nNo chunks to add to vector db')
+            logger.warning('No chunks to add to vector db')
 
 def main():
     asyncio.run(load_knowledge_base())

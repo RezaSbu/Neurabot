@@ -7,12 +7,14 @@ from redis.commands.search.indexDefinition import IndexDefinition, IndexType
 from redis.commands.search.query import Query
 from redis.commands.json.path import Path
 from app.config import settings
+import structlog
+
+logger = structlog.get_logger()
 
 VECTOR_IDX_NAME = 'idx:vector'
 VECTOR_IDX_PREFIX = 'vector:'
 CHAT_IDX_NAME = 'idx:chat'
 CHAT_IDX_PREFIX = 'chat:'
-
 
 # اتصال به Redis
 def get_redis():
@@ -42,15 +44,16 @@ async def create_vector_index(rdb):
             fields=schema,
             definition=IndexDefinition(prefix=[VECTOR_IDX_PREFIX], index_type=IndexType.JSON)
         )
-        print(f"Vector index '{VECTOR_IDX_NAME}' created successfully")
+        logger.info(f"Vector index '{VECTOR_IDX_NAME}' created successfully")
     except Exception as e:
-        print(f"Error creating vector index '{VECTOR_IDX_NAME}': {e}")
+        logger.error(f"Error creating vector index '{VECTOR_IDX_NAME}': {e}")
 
 async def add_chunks_to_vector_db(rdb, chunks):
     async with rdb.pipeline(transaction=True) as pipe:
         for chunk in chunks:
             pipe.json().set(VECTOR_IDX_PREFIX + chunk['chunk_id'], Path.root_path(), chunk)
         await pipe.execute()
+    logger.info(f"Added {len(chunks)} chunks to vector DB")
 
 async def search_vector_db(rdb, query_vector, top_k=settings.VECTOR_SEARCH_TOP_K):
     query = (
@@ -62,6 +65,7 @@ async def search_vector_db(rdb, query_vector, top_k=settings.VECTOR_SEARCH_TOP_K
     res = await rdb.ft(VECTOR_IDX_NAME).search(query, {
         'query_vector': np.array(query_vector, dtype=np.float32).tobytes()
     })
+    logger.info(f"Vector search returned {len(res.docs)} results")
     return [{
         'score': 1 - float(d.score),
         'chunk_id': d.chunk_id,
@@ -86,9 +90,9 @@ async def create_chat_index(rdb):
             fields=schema,
             definition=IndexDefinition(prefix=[CHAT_IDX_PREFIX], index_type=IndexType.JSON)
         )
-        print(f"Chat index '{CHAT_IDX_NAME}' created successfully")
+        logger.info(f"Chat index '{CHAT_IDX_NAME}' created successfully")
     except Exception as e:
-        print(f"Error creating chat index '{CHAT_IDX_NAME}': {e}")
+        logger.error(f"Error creating chat index '{CHAT_IDX_NAME}': {e}")
 
 # ✅ نسخه نهایی با تنظیم TTL پیش‌فرض 7 روز (604800 ثانیه)
 async def create_chat(rdb, chat_id, created, ttl_seconds=604800):
@@ -132,7 +136,7 @@ async def get_all_chats(rdb):
 async def setup_db(rdb):
     try:
         await rdb.ft(VECTOR_IDX_NAME).dropindex(delete_documents=True)
-        print(f"Deleted vector index '{VECTOR_IDX_NAME}' and all associated documents")
+        logger.info(f"Deleted vector index '{VECTOR_IDX_NAME}' and all associated documents")
     except Exception:
         pass
     finally:
@@ -147,7 +151,6 @@ async def clear_db(rdb):
     for index_name in [VECTOR_IDX_NAME, CHAT_IDX_NAME]:
         try:
             await rdb.ft(index_name).dropindex(delete_documents=True)
-            print(f"Deleted index '{index_name}' and all associated documents")
+            logger.info(f"Deleted index '{index_name}' and all associated documents")
         except Exception as e:
-            print(f"Index '{index_name}': {e}")
-
+            logger.error(f"Index '{index_name}': {e}")
