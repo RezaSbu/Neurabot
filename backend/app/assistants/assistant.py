@@ -1,3 +1,4 @@
+# filename: assistant.py
 from app.assistants.prompts import MAIN_SYSTEM_PROMPT, RAG_SYSTEM_PROMPT
 from app.openai import chat_stream
 from app.db import get_chat_messages, add_chat_messages
@@ -8,9 +9,9 @@ import asyncio
 from app.utils.sse_stream import SSEStream
 
 class RAGAssistant:
-    def __init__(self, chat_id, rdb, history_size=30, max_tool_calls=3):
+    def __init__(self, chat_id, rdb, history_size=30, max_tool_calls=3):  # rdb is actually Qdrant client
         self.chat_id = chat_id
-        self.rdb = rdb
+        self.client = rdb  # Renamed for clarity
         self.sse_stream = None
         self.main_system_message = {'role': 'system', 'content': MAIN_SYSTEM_PROMPT}
         self.rag_system_message = {'role': 'system', 'content': RAG_SYSTEM_PROMPT}
@@ -31,7 +32,7 @@ class RAGAssistant:
         any_result = False
         for call in tool_calls[:self.max_tool_calls]:
             kb_args = call.function.parsed_arguments
-            kb_result = await kb_args(self.rdb)
+            kb_result = await kb_args(self.client)  # Use Qdrant client
             chat_messages.append({'role': 'tool', 'tool_call_id': call.id, 'content': kb_result})
             if "یافت نشد" not in kb_result:
                 any_result = True
@@ -45,7 +46,7 @@ class RAGAssistant:
             return {"content": "متأسفانه محصولی مطابق درخواست شما در پایگاه داده پیدا نشد."}
 
     async def _run_step(self, message):
-        history = await get_chat_messages(self.rdb, self.chat_id, last_n=self.history_size)
+        history = await get_chat_messages(self.client, self.chat_id, last_n=self.history_size)
         history.append({'role': 'user', 'content': message})
 
         assistant_msg = await self._generate_chat_response(
@@ -73,7 +74,7 @@ class RAGAssistant:
             ] if calls else [],
             'created': int(time())
         }
-        await add_chat_messages(self.rdb, self.chat_id, [user_db_msg, assistant_db_msg])
+        await add_chat_messages(self.client, self.chat_id, [user_db_msg, assistant_db_msg])
 
     async def _handle(self, message):
         try:

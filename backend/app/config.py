@@ -1,3 +1,4 @@
+# filename: config.py
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
@@ -6,8 +7,9 @@ class Settings(BaseSettings):
     MODEL: str = "gpt-4o-mini"
     EMBEDDING_MODEL: str = 'text-embedding-3-large'
     EMBEDDING_DIMENSIONS: int = 1024
-    REDIS_HOST: str = 'localhost'
-    REDIS_PORT: int = 6379
+    QDRANT_URL: str = 'http://localhost:6333'  # Default to localhost for manual runs
+    QDRANT_COLLECTION_NAME: str = 'products'
+    QDRANT_CHAT_COLLECTION_NAME: str = 'chats'
     DOCS_DIR: str = 'data/docs'
     EXPORT_DIR: str = 'data'
     VECTOR_SEARCH_TOP_K: int = 10
@@ -15,9 +17,3 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file='.env')
 
 settings = Settings()
-
-
-
-
-
-

@@ -1,3 +1,4 @@
+# filename: loader.py
 import json
 import os
 import asyncio
@@ -5,7 +6,7 @@ from uuid import uuid4
 from tqdm import tqdm
 from app.utils.splitter import TextSplitter
 from app.openai import get_embeddings, token_size
-from app.db import get_redis, setup_db, add_chunks_to_vector_db
+from app.db import get_qdrant_client, create_vector_index, add_chunks_to_vector_db
 from app.config import settings
 
 def batchify(iterable, batch_size):
@@ -171,16 +172,16 @@ async def process_docs(docs_dir=settings.DOCS_DIR):
     return chunks
 
 async def load_knowledge_base():
-    async with get_redis() as rdb:
-        print('Setting up Redis database')
-        await setup_db(rdb)
-        chunks = await process_docs()
-        if chunks:
-            print('\nAdding chunks to vector db')
-            await add_chunks_to_vector_db(rdb, chunks)
-            print('\nKnowledge base loaded')
-        else:
-            print('\nNo chunks to add to vector db')
+    client = get_qdrant_client()
+    print('Setting up Qdrant database')
+    await create_vector_index(client)
+    chunks = await process_docs()
+    if chunks:
+        print('\nAdding chunks to vector db')
+        await add_chunks_to_vector_db(client, chunks)
+        print('\nKnowledge base loaded')
+    else:
+        print('\nNo chunks to add to vector db')
 
 def main():
     asyncio.run(load_knowledge_base())
