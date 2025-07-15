@@ -1,190 +1,69 @@
-# filename: loader.py
-import json
-import os
-import asyncio
+"""
+اسکریپت بارگذاری اسناد:
+۱. اسناد JSON را می‌خواند
+2. متن را به چانک تبدیل می‌کند
+3. برای هر چانک embedding می‌سازد
+4. همه را در Qdrant upsert می‌کند
+"""
+
+import os, json, asyncio
 from uuid import uuid4
 from tqdm import tqdm
-from app.utils.splitter import TextSplitter
-from app.openai import get_embeddings, token_size
-from app.db import get_qdrant_client, create_vector_index, add_chunks_to_vector_db
+from typing import List, Dict
+
 from app.config import settings
+from app.db import recreate_product_collection, upsert_chunks
+from app.openai import get_embedding, token_size
+from app.utils.splitter import TextSplitter
 
-def batchify(iterable, batch_size):
-    for i in range(0, len(iterable), batch_size):
-        yield iterable[i:i + batch_size]
+# ---------- کمک‌کننده ----------
+def load_json(path: str):
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
 
-def load_json_file(path):
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception as e:
-        print(f"Error loading JSON file {path}: {e}")
-        return []
+def batch(lst, n=512):
+    for i in range(0, len(lst), n):
+        yield lst[i : i + n]
 
-def normalize_budget_range(price_numeric):
-    if not isinstance(price_numeric, (int, float)):
-        return "unknown"
-    if price_numeric < 500_000:
-        return "under_500k"
-    elif 500_000 <= price_numeric <= 3_000_000:
-        return "500k_to_3m"
-    elif 3_000_000 < price_numeric <= 5_000_000:
-        return "3m_to_5m"
-    elif 5_000_000 < price_numeric <= 10_000_000:
-        return "5m_to_10m"
-    elif 10_000_000 < price_numeric <= 20_000_000:
-        return "10m_to_20m"
-    else:
-        return "over_20m"
+# ---------- پردازش ----------
+async def build_chunks(docs_dir: str) -> List[Dict]:
+    splitter = TextSplitter(chunk_size=512, chunk_overlap=150)
+    chunks: List[Dict] = []
 
-async def process_docs(docs_dir=settings.DOCS_DIR):
-    docs = []
-    print('\nLoading documents')
-
-    files = [f for f in os.listdir(docs_dir) if f.endswith('.json')]
-    if not files:
-        print(f"No JSON files found in {docs_dir}")
-        return []
-
-    for filename in tqdm(files, desc="Processing files"):
-        file_path = os.path.join(docs_dir, filename)
-        doc_name = os.path.splitext(filename)[0]
-
-        data = load_json_file(file_path)
-        if not data or not isinstance(data, list):
-            print(f"Invalid or empty JSON structure in {filename}")
-            continue
-
+    files = [f for f in os.listdir(docs_dir) if f.endswith(".json")]
+    for fn in files:
+        data = load_json(os.path.join(docs_dir, fn))
         for item in data:
-            attributes = {attr["label"]: attr["value"] for attr in item.get("attributes", [])}
-            features = {feat["label"]: feat["value"] for feat in item.get("features", [])}
-            variations = item.get("variations", [])
-            category = item.get("category", "نامشخص")
-
-            strict_category = category if category in [
-                "کلاه کاسکت", "پوشاک موتورسواری", "لاستیک موتور سیکلت",
-                "لوازم جانبی موتورسیکلت", "پروتکشن موتور سیکلت", "باکس موتور سیکلت",
-                "لوازم کلاه کاسکت", "لوازم کلیک و طرح کلیک", "لوازم آیروکس و طرح آیروکس (NVX)",
-                "سایر"
-            ] else "نامشخص"
-
-            price_numeric = item.get('price_numeric', 0)
-            budget_range = normalize_budget_range(price_numeric)
-
-            features_flat = "، ".join([f"{k}: {v}" for k, v in features.items()])
-            sizes_flat = [v.get("size", "").upper() for v in variations if v.get("size")]
-
-            metadata = {
-                'name': item.get('title', 'محصول ناشناس'),
-                'price': item.get('price', 'نامشخص'),
-                'price_numeric': price_numeric,
-                'budget_range': budget_range,
-                'brand': item.get('brand', 'نامشخص'),
-                'category': strict_category,
-                'link': item.get('url', ''),
-                'stock': item.get('stock', 'نامشخص'),
-                'attributes': attributes,
-                'features': features,
-                'features_flat': features_flat.lower(),
-                'sizes_flat': sizes_flat,
-                'variations': variations,
-                'tags': item.get('tags', []),
-                'product_id': item.get('product_id', ''),
-                'image': item.get('image', ''),
-                'description': item.get('description', '')
-            }
-
-            text_parts = []
-            if 'title' in item:
-                text_parts.append(f"نام محصول: {item['title']}")
-            if 'price' in item:
-                text_parts.append(f"قیمت: {item['price']}")
-            if 'brand' in item:
-                text_parts.append(f"برند: {item['brand']}")
-            if strict_category != "نامشخص":
-                text_parts.append(f"دسته‌بندی: {strict_category}")
-            if features:
-                text_parts.append("ویژگی‌ها:")
-                for key, value in features.items():
-                    text_parts.append(f"  - {key}: {value}")
-            if variations:
-                text_parts.append("سایزها و موجودی:")
-                for var in variations:
-                    text_parts.append(f"  - سایز: {var.get('size', 'نامشخص')}، موجودی: {var.get('stock', 'نامشخص')}")
-            if 'description' in item and item['description']:
-                text_parts.append(f"توضیحات: {item['description']}")
-            if 'tags' in item and item['tags']:
-                text_parts.append(f"تگ‌ها: {', '.join(item['tags'])}")
-            if 'url' in item:
-                text_parts.append(f"لینک محصول: {item['url']}")
-            if 'image' in item:
-                text_parts.append(f"تصویر: {item['image']}")
-
-            text_block = "\n".join(text_parts)
-            docs.append((item.get('title', 'محصول'), text_block, metadata))
-
-    print(f'Loaded {len(docs)} documents')
-
-    if not docs:
-        print("No valid documents to process")
-        return []
-
-    chunks = []
-    text_splitter = TextSplitter(chunk_size=512, chunk_overlap=150)
-    print('\nSplitting documents into chunks')
-
-    for doc_name, doc_text, metadata in tqdm(docs, desc="Splitting documents"):
-        doc_id = str(uuid4())[:8]
-        doc_chunks = text_splitter.split(doc_text)
-        for chunk_idx, chunk_text in enumerate(doc_chunks):
-            chunk = {
-                'chunk_id': f'{doc_id}:{chunk_idx+1:04}',
-                'text': chunk_text,
-                'doc_name': doc_name,
-                'vector': None,
-                'metadata': metadata
-            }
-            chunks.append(chunk)
-        print(f'{doc_name}: {len(doc_chunks)} chunks')
-
-    chunk_sizes = [token_size(c['text']) for c in chunks]
-    print(f'\nTotal chunks: {len(chunks)}')
-    print(f'Min chunk size: {min(chunk_sizes)} tokens')
-    print(f'Max chunk size: {max(chunk_sizes)} tokens')
-    print(f'Average chunk size: {round(sum(chunk_sizes)/len(chunks))} tokens')
-
-    vectors = []
-    print('\nEmbedding chunks')
-    with tqdm(total=len(chunks), desc="Embedding chunks") as pbar:
-        for batch in batchify(chunks, batch_size=64):
-            try:
-                batch_vectors = await get_embeddings([chunk['text'] for chunk in batch])
-                vectors.extend(batch_vectors)
-                pbar.update(len(batch))
-            except Exception as e:
-                print(f"Error embedding batch: {e}")
-                vectors.extend([None] * len(batch))
-                pbar.update(len(batch))
-
-    for chunk, vector in zip(chunks, vectors):
-        chunk['vector'] = vector if vector else [0.0] * settings.EMBEDDING_DIMENSIONS
-
+            meta = item | {"doc_name": item.get("title", "")}
+            text_src = (
+                item.get("description") or item.get("title") or "بدون توضیح"
+            )
+            for part in splitter.split(text_src):
+                emb = await get_embedding(part)
+                chunks.append(
+                    {
+                        "chunk_id": str(uuid4()),
+                        "vector": emb,
+                        "metadata": meta | {"text": part},
+                    }
+                )
     return chunks
 
-async def load_knowledge_base():
-    client = get_qdrant_client()
-    print('Setting up Qdrant database')
-    await create_vector_index(client)
-    chunks = await process_docs()
-    if chunks:
-        print('\nAdding chunks to vector db')
-        await add_chunks_to_vector_db(client, chunks)
-        print('\nKnowledge base loaded')
-    else:
-        print('\nNo chunks to add to vector db')
+async def process_docs() -> None:
+    # 1) ساخت مجموعهٔ برداری تازه
+    recreate_product_collection()
 
+    # 2) چانک و امبدینگ
+    chunks = await build_chunks(settings.DOCS_DIR)
+    print(f"Total chunks: {len(chunks)}")
+
+    # 3) آپسرت دسته‌ای
+    for b in tqdm(list(batch(chunks, 500)), desc="Upserting to Qdrant"):
+        upsert_chunks(b)
+
+# ---------- entry ----------
 def main():
-    asyncio.run(load_knowledge_base())
+    asyncio.run(process_docs())
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
