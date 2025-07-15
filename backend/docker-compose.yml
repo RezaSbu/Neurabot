@@ -1,31 +1,29 @@
-# filename: docker-compose.yml
+version: '3.8'
+
 services:
   app:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    build: .
     depends_on:
       - qdrant
     environment:
-      - ALLOW_ORIGINS=*
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - MODEL=gpt-4o-mini
-      - EMBEDDING_MODEL=text-embedding-3-large
-      - EMBEDDING_DIMENSIONS=1024
-      - QDRANT_URL=http://qdrant:6333
-      - QDRANT_COLLECTION_NAME=products
-      - QDRANT_CHAT_COLLECTION_NAME=chats
-      - DOCS_DIR=data/docs
-      - EXPORT_DIR=data
-    ports:
-      - "8000:8000"
+      - ALLOW_ORIGINS
+      - OPENAI_API_KEY
+      - MODEL
+      - EMBEDDING_MODEL
+      - EMBEDDING_DIMENSIONS
+      - QDRANT_HOST
+      - QDRANT_PORT
+      - QDRANT_COLLECTION_NAME
+      - QDRANT_CHAT_COLLECTION_NAME
+      - DOCS_DIR
+      - EXPORT_DIR
 
   qdrant:
     image: qdrant/qdrant:latest
-    ports:
-      - "6333:6333"
     volumes:
       - qdrant_data:/qdrant/storage
+    ports:
+      - "6333:6333"
 
 volumes:
   qdrant_data:

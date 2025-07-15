@@ -1,8 +1,7 @@
-# filename: local_assistant.py
 import asyncio
 from rich.console import Console
 from openai import pydantic_function_tool
-from app.db import get_qdrant_client
+from app.db import get_qdrant
 from app.openai import chat_stream
 from app.assistants.tools import QueryKnowledgeBaseTool
 from app.assistants.prompts import MAIN_SYSTEM_PROMPT, RAG_SYSTEM_PROMPT
@@ -30,7 +29,7 @@ class LocalRAGAssistant:
             return final.choices[0].message
 
     async def run(self):
-        client = get_qdrant_client()
+        qdrant = get_qdrant()
         self.console.print('NeuraQueen در خدمت شماست! 😊 بفرمایید سؤال بعدی؟', style='green')
         while True:
             chat_hist = self.chat_history[-self.history_size:]
@@ -57,7 +56,7 @@ class LocalRAGAssistant:
                 for call in calls[:self.max_tool_calls]:
                     if self.log_tool_calls:
                         self.console.print(f"\n[tool call] {call.to_dict()}", style='yellow')
-                    kb_res = await call.function.parsed_arguments(client)  # Use Qdrant client
+                    kb_res = await call.function.parsed_arguments(qdrant)
                     if "یافت نشد" not in kb_res:
                         any_result = True
                     if self.log_tool_results:

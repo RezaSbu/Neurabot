@@ -1,10 +1,20 @@
-# filename: Dockerfile
-FROM python:3.11-slim
+FROM python:3.12-slim as requirements-stage
 
-WORKDIR /app
-COPY backend .
+WORKDIR /tmp
 
-RUN pip install poetry==1.8.3
-RUN poetry config virtualenvs.create false && poetry install --no-dev
+RUN pip install poetry
+COPY ./pyproject.toml ./poetry.lock* /tmp/
+RUN poetry export -f requirements.txt --output requirements.txt --without-hashes
 
-CMD ["fastapi", "run", "app/main.py", "--host", "0.0.0.0", "--port", "8000"]
+FROM python:3.12-slim
+
+WORKDIR /home
+
+COPY --from=requirements-stage /tmp/requirements.txt /home/requirements.txt
+RUN pip install --no-cache-dir --upgrade -r /home/requirements.txt
+RUN pip install qdrant-client
+
+COPY ./app /home/app
+COPY ./data/docs /home/data/docs
+
+CMD ["fastapi", "run", "app/main.py", "--port", "8000"]
