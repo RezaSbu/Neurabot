@@ -27,6 +27,30 @@ function Chatbot() {
 
   const isLoading = messages.length && messages[messages.length - 1].loading;
 
+  // لود پیام‌ها از سرور موقع استارت
+  useEffect(() => {
+    async function loadMessages() {
+      if (chatId) {
+        try {
+          const serverMessages = await fetch(`http://localhost:8000/chats/${chatId}/messages`, {
+            headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+          }).then(res => res.json());
+          setMessages(draft => {
+            draft.length = 0; // پاک کردن پیام‌های محلی
+            draft.push(...serverMessages.map(msg => ({
+              role: msg.role,
+              content: msg.content,
+              timestamp: new Date().toISOString()
+            })));
+          });
+        } catch (err) {
+          console.error('Failed to load messages from server:', err);
+        }
+      }
+    }
+    loadMessages();
+  }, [chatId]);
+
   useEffect(() => {
     if (!shouldSaveToLocalStorage.current) return;
     try {
@@ -74,7 +98,7 @@ function Chatbot() {
     setMessages(draft => [
       ...draft,
       { role: 'user', content: trimmedMessage, timestamp },
-      { role: 'assistant', content: '', sources: [], loading: true, timestamp },
+      { role: 'assistant', content: '', sources: [], loading: true, timestamp }
     ]);
     setNewMessage('');
 
@@ -94,10 +118,21 @@ function Chatbot() {
 
       const stream = await api.sendChatMessage(chatIdOrNew, trimmedMessage, recentMessages);
       streamRef.current = stream;
-      for await (const textChunk of parseSSEStream(stream)) {
-        setMessages(draft => {
-          draft[draft.length - 1].content += textChunk;
-        });
+      let retryCount = 0;
+      const maxRetries = 3;
+      while (retryCount < maxRetries) {
+        try {
+          for await (const textChunk of parseSSEStream(stream)) {
+            setMessages(draft => {
+              draft[draft.length - 1].content += textChunk;
+            });
+          }
+          break;
+        } catch (err) {
+          retryCount++;
+          if (retryCount >= maxRetries) throw err;
+          await new Promise(resolve => setTimeout(resolve, 5000)); // Retry after 5s
+        }
       }
       setMessages(draft => {
         draft[draft.length - 1].loading = false;

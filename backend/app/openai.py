@@ -1,5 +1,6 @@
 import tiktoken
 from openai import AsyncOpenAI
+from aiocache import cached
 from app.config import settings
 
 client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
@@ -8,10 +9,12 @@ tokenizer = tiktoken.encoding_for_model(settings.MODEL)
 def token_size(text):
     return len(tokenizer.encode(text))
 
+@cached(ttl=3600)  # Cache for 1 hour
 async def get_embedding(input, model=settings.EMBEDDING_MODEL, dimensions=settings.EMBEDDING_DIMENSIONS):
     res = await client.embeddings.create(input=input, model=model, dimensions=dimensions)
     return res.data[0].embedding
 
+@cached(ttl=3600)
 async def get_embeddings(input, model=settings.EMBEDDING_MODEL, dimensions=settings.EMBEDDING_DIMENSIONS):
     res = await client.embeddings.create(input=input, model=model, dimensions=dimensions)
     return [d.embedding for d in res.data]

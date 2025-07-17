@@ -1,4 +1,5 @@
-from app.assistants.prompts import MAIN_SYSTEM_PROMPT, RAG_SYSTEM_PROMPT
+from langdetect import detect
+from app.assistants.prompts import get_prompts  # فقط get_prompts
 from app.openai import chat_stream
 from app.db import get_chat_messages, add_chat_messages
 from app.assistants.tools import QueryKnowledgeBaseTool
@@ -12,8 +13,6 @@ class RAGAssistant:
         self.chat_id = chat_id
         self.rdb = rdb
         self.sse_stream = None
-        self.main_system_message = {'role': 'system', 'content': MAIN_SYSTEM_PROMPT}
-        self.rag_system_message = {'role': 'system', 'content': RAG_SYSTEM_PROMPT}
         self.tools_schema = [pydantic_function_tool(QueryKnowledgeBaseTool)]
         self.history_size = history_size
         self.max_tool_calls = max_tool_calls
@@ -27,8 +26,9 @@ class RAGAssistant:
             final = await stream.get_final_completion()
             return final.choices[0].message
 
-    async def _handle_tool_calls(self, tool_calls, chat_messages):
+    async def _handle_tool_calls(self, tool_calls, chat_messages, lang):
         any_result = False
+        rag_system = get_prompts(lang)[1]  # RAG prompt based on lang
         for call in tool_calls[:self.max_tool_calls]:
             kb_args = call.function.parsed_arguments
             kb_result = await kb_args(self.rdb)
@@ -38,18 +38,21 @@ class RAGAssistant:
 
         if any_result:
             return await self._generate_chat_response(
-                system_message=self.rag_system_message,
+                system_message={'role': 'system', 'content': rag_system},
                 chat_messages=chat_messages,
             )
         else:
-            return {"content": "متأسفانه محصولی مطابق درخواست شما در پایگاه داده پیدا نشد."}
+            return {"content": "متأسفانه محصولی مطابق درخواست شما در پایگاه داده پیدا نشد." if lang == 'fa' else "Sorry, no matching product found."}
 
     async def _run_step(self, message):
+        lang = detect(message)  # Detect language
+        main_system = get_prompts(lang)[0]  # Main prompt based on lang
+
         history = await get_chat_messages(self.rdb, self.chat_id, last_n=self.history_size)
         history.append({'role': 'user', 'content': message})
 
         assistant_msg = await self._generate_chat_response(
-            system_message=self.main_system_message,
+            system_message={'role': 'system', 'content': main_system},
             chat_messages=history,
             tools=self.tools_schema,
             tool_choice='auto'
@@ -62,7 +65,7 @@ class RAGAssistant:
                 'content': assistant_msg.content or "",
                 'tool_calls': assistant_msg.tool_calls
             })
-            assistant_msg = await self._handle_tool_calls(calls, history)
+            assistant_msg = await self._handle_tool_calls(calls, history, lang)
 
         user_db_msg = {'role': 'user', 'content': message, 'created': int(time())}
         assistant_db_msg = {

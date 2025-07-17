@@ -1,10 +1,13 @@
 from uuid import uuid4
 from time import time
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request  # اضافه کردن Request
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
-from app.db import get_redis, create_chat, chat_exists, add_chat_messages
+from app.db import get_redis, create_chat, chat_exists, add_chat_messages, get_chat_messages
 from app.assistants.assistant import RAGAssistant
+from app.auth import get_current_user
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 
 class ChatIn(BaseModel):
     message: str
@@ -17,11 +20,14 @@ async def get_rdb():
     finally:
         await rdb.aclose()
 
+# تنظیم Limiter برای روتر
+limiter = Limiter(key_func=get_remote_address)
 router = APIRouter()
 
 # 📌 ساخت چت جدید
 @router.post('/chats')
-async def create_new_chat(rdb = Depends(get_rdb)):
+@limiter.limit("100/minute")
+async def create_new_chat(request: Request, rdb=Depends(get_rdb), user=Depends(get_current_user)):
     chat_id = str(uuid4())[:8]
     created = int(time())
     await create_chat(rdb, chat_id, created)
@@ -29,7 +35,8 @@ async def create_new_chat(rdb = Depends(get_rdb)):
 
 # 📌 ارسال پیام به چت و دریافت پاسخ به صورت استریم + ذخیره پیام‌ها
 @router.post('/chats/{chat_id}')
-async def chat(chat_id: str, chat_in: ChatIn):
+@limiter.limit("100/minute")
+async def chat(request: Request, chat_id: str, chat_in: ChatIn, user=Depends(get_current_user)):
     rdb = get_redis()
 
     if not await chat_exists(rdb, chat_id):
@@ -63,5 +70,13 @@ async def chat(chat_id: str, chat_in: ChatIn):
 
     return EventSourceResponse(event_generator(), background=rdb.aclose)
 
-
-
+# 📌 دریافت پیام‌های چت (برای sync UX)
+@router.get('/chats/{chat_id}/messages')
+@limiter.limit("100/minute")
+async def get_messages(request: Request, chat_id: str, user=Depends(get_current_user)):
+    rdb = get_redis()
+    if not await chat_exists(rdb, chat_id):
+        raise HTTPException(status_code=404)
+    messages = await get_chat_messages(rdb, chat_id)
+    await rdb.aclose()
+    return messages

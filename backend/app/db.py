@@ -2,7 +2,7 @@ import json
 import numpy as np
 from time import time
 from redis.asyncio import Redis
-from redis.commands.search.field import TextField, VectorField, NumericField
+from redis.commands.search.field import TextField, VectorField, NumericField, TagField
 from redis.commands.search.indexDefinition import IndexDefinition, IndexType
 from redis.commands.search.query import Query
 from redis.commands.json.path import Path
@@ -26,6 +26,11 @@ async def create_vector_index(rdb):
         TextField('$.chunk_id', no_stem=True, as_name='chunk_id'),
         TextField('$.text', as_name='text'),
         TextField('$.doc_name', as_name='doc_name'),
+        TextField('$.metadata.category', as_name='category'),
+        TextField('$.metadata.brand', as_name='brand'),
+        NumericField('$.metadata.price_numeric', as_name='price_numeric'),
+        TagField('$.metadata.features_flat', separator='|', as_name='features_flat'),
+        TagField('$.metadata.sizes_flat[*]', separator='|', as_name='sizes_flat'),
         VectorField(
             '$.vector',
             'FLAT',
@@ -52,11 +57,15 @@ async def add_chunks_to_vector_db(rdb, chunks):
             pipe.json().set(VECTOR_IDX_PREFIX + chunk['chunk_id'], Path.root_path(), chunk)
         await pipe.execute()
 
-async def search_vector_db(rdb, query_vector, top_k=settings.VECTOR_SEARCH_TOP_K):
+async def search_vector_db(rdb, query_vector, top_k=settings.VECTOR_SEARCH_TOP_K, filters=None):
+    base_query = f'(*)=>[KNN {top_k} @vector $query_vector AS score]'
+    if filters:
+        filter_str = ' '.join(filters)
+        base_query = f'{filter_str} =>[KNN {top_k} @vector $query_vector AS score]'
     query = (
-        Query(f'(*)=>[KNN {top_k} @vector $query_vector AS score]')
+        Query(base_query)
         .sort_by('score')
-        .return_fields('score', 'chunk_id', 'text', 'doc_name')
+        .return_fields('score', 'chunk_id', 'text', 'doc_name', 'metadata')
         .dialect(2)
     )
     res = await rdb.ft(VECTOR_IDX_NAME).search(query, {
@@ -66,7 +75,8 @@ async def search_vector_db(rdb, query_vector, top_k=settings.VECTOR_SEARCH_TOP_K
         'score': 1 - float(d.score),
         'chunk_id': d.chunk_id,
         'text': d.text,
-        'doc_name': d.doc_name
+        'doc_name': d.doc_name,
+        'metadata': json.loads(d.metadata) if hasattr(d, 'metadata') else {}
     } for d in res.docs]
 
 async def get_all_vectors(rdb):
@@ -150,4 +160,3 @@ async def clear_db(rdb):
             print(f"Deleted index '{index_name}' and all associated documents")
         except Exception as e:
             print(f"Index '{index_name}': {e}")
-

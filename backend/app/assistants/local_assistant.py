@@ -4,14 +4,13 @@ from openai import pydantic_function_tool
 from app.db import get_redis
 from app.openai import chat_stream
 from app.assistants.tools import QueryKnowledgeBaseTool
-from app.assistants.prompts import MAIN_SYSTEM_PROMPT, RAG_SYSTEM_PROMPT
+from app.assistants.prompts import get_prompts
+from langdetect import detect
 
 class LocalRAGAssistant:
     def __init__(self, history_size=30, max_tool_calls=3, log_tool_calls=True, log_tool_results=True):
         self.console = Console()
         self.chat_history = []
-        self.main_system_message = {'role': 'system', 'content': MAIN_SYSTEM_PROMPT}
-        self.rag_system_message = {'role': 'system', 'content': RAG_SYSTEM_PROMPT}
         self.history_size = history_size
         self.max_tool_calls = max_tool_calls
         self.log_tool_calls = log_tool_calls
@@ -39,11 +38,14 @@ class LocalRAGAssistant:
                     print("خدانگهدار! 👋")
                     break
 
+                lang = detect(user_input)  # Detect language
+                main_system, rag_system = get_prompts(lang)
+
                 user_msg = {'role': 'user', 'content': user_input}
                 chat_hist.append(user_msg)
 
                 assistant_msg = await self._generate_chat_response(
-                    system_message=self.main_system_message,
+                    system_message={'role': 'system', 'content': main_system},
                     chat_messages=chat_hist,
                     tools=[pydantic_function_tool(QueryKnowledgeBaseTool)],
                     tool_choice='auto'
@@ -64,11 +66,11 @@ class LocalRAGAssistant:
                         chat_hist.append({'role': 'tool', 'tool_call_id': call.id, 'content': kb_res})
                     if any_result:
                         assistant_msg = await self._generate_chat_response(
-                            system_message=self.rag_system_message,
+                            system_message={'role': 'system', 'content': rag_system},
                             chat_messages=chat_hist,
                         )
                     else:
-                        assistant_msg = {"content": "متأسفانه محصولی مطابق درخواست شما در پایگاه داده موجود نیست."}
+                        assistant_msg = {"content": "متأسفانه محصولی مطابق درخواست شما در پایگاه داده موجود نیست." if lang == 'fa' else "Sorry, no matching product found."}
 
                 self.chat_history.extend([user_msg, {'role': 'assistant', 'content': assistant_msg['content'] if isinstance(assistant_msg, dict) else assistant_msg.content}])
                 self.console.print("\n🔁 گفتگو ادامه دارد...")
