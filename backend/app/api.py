@@ -1,6 +1,6 @@
 from uuid import uuid4
 from time import time
-from fastapi import APIRouter, Depends, HTTPException, Request  # اضافه کردن Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 from app.db import get_redis, create_chat, chat_exists, add_chat_messages, get_chat_messages
