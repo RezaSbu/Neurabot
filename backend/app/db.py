@@ -91,7 +91,7 @@ async def create_chat_index(rdb):
         print(f"Error creating chat index '{CHAT_IDX_NAME}': {e}")
 
 # ✅ نسخه نهایی با تنظیم TTL پیش‌فرض 7 روز (604800 ثانیه)
-async def create_chat(rdb, chat_id, created, ttl_seconds=200):
+async def create_chat(rdb, chat_id, created, ttl_seconds=172800):
     chat = {'id': chat_id, 'created': created, 'messages': []}
     key = CHAT_IDX_PREFIX + chat_id
     await rdb.json().set(key, Path.root_path(), chat)

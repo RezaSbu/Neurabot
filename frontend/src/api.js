@@ -10,13 +10,19 @@ function getSessionId() {
   return id;
 }
 
+function getUserEmail() {
+  return localStorage.getItem('user_email') || '';
+}
+
 async function createChat() {
   const sessionId = getSessionId();
+  const email = getUserEmail();
   const res = await fetch(BASE_URL + '/chats', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'X-Session-ID': sessionId
+      'X-Session-ID': sessionId,
+      'X-User-Email': email
     }
   });
   const data = await res.json();

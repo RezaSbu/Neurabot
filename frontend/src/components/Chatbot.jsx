@@ -7,6 +7,8 @@ import ChatInput from '@/components/ChatInput';
 
 function Chatbot() {
   const [chatId, setChatId] = useState(() => localStorage.getItem('chatId') || null);
+  const [email, setEmail] = useState(() => localStorage.getItem('user_email') || '');
+  const [emailSubmitted, setEmailSubmitted] = useState(!!email);
   const [messages, setMessages] = useImmer(() => {
     const savedMessages = localStorage.getItem('messages');
     const savedTime = localStorage.getItem('messagesSavedTime');
@@ -24,7 +26,6 @@ function Chatbot() {
   const [newMessage, setNewMessage] = useState('');
   const streamRef = useRef(null);
   const shouldSaveToLocalStorage = useRef(true);
-
   const isLoading = messages.length && messages[messages.length - 1].loading;
 
   useEffect(() => {
@@ -81,7 +82,7 @@ function Chatbot() {
     let chatIdOrNew = chatId;
     try {
       if (!chatId) {
-        const { id } = await api.createChat();
+        const { id } = await api.createChat(email);
         setChatId(id);
         chatIdOrNew = id;
       }
@@ -113,6 +114,40 @@ function Chatbot() {
     } finally {
       shouldSaveToLocalStorage.current = true;
     }
+  }
+
+  if (!emailSubmitted) {
+    return (
+      <div className="p-5 space-y-4">
+        <h2 className="text-lg font-semibold">😊 خوش اومدی!</h2>
+        <p>لطفاً ایمیل‌ت رو وارد کن تا بتونیم چت رو شروع کنیم.</p>
+        <form
+          onSubmit={e => {
+            e.preventDefault();
+            if (email.trim()) {
+              localStorage.setItem('user_email', email.trim());
+              setEmailSubmitted(true);
+            }
+          }}
+          className="space-y-3"
+        >
+          <input
+            type="email"
+            className="w-full p-2 rounded border border-gray-300"
+            placeholder="example@email.com"
+            value={email}
+            onChange={e => setEmail(e.target.value)}
+            required
+          />
+          <button
+            type="submit"
+            className="w-full py-2 bg-blue-700 text-white rounded hover:bg-blue-800"
+          >
+            شروع چت
+          </button>
+        </form>
+      </div>
+    );
   }
 
   return (
