@@ -23,6 +23,7 @@ langchain = "^0.3.26"
 sentence-transformers = "^4.1.0"
 redis = "^5.0.8"
 unidecode = "^1.4.0"
+asyncpg = "^0.30.0"
 [tool.poetry.group.dev.dependencies]
 ipykernel = "^6.29.5"
 
