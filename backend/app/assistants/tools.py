@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field
 from typing import Optional, List
-from app.db import get_all_vectors
+from app.db import search_vector_db, get_all_vectors
 from app.openai import get_embedding
 import numpy as np
 from numpy.linalg import norm
@@ -17,91 +17,98 @@ class QueryKnowledgeBaseTool(BaseModel):
 
     async def __call__(self, rdb):
         query_vector = await get_embedding(self.query_input)
-        all_chunks = await get_all_vectors(rdb)
 
-        exact_matches = []
-        near_matches = []
+        async def filter_chunks(chunks):
+            exact_matches = []
+            near_matches = []
 
-        for chunk in all_chunks:
-            meta = chunk.get("metadata", {})
-            price = meta.get("price_numeric", None)
-            if not isinstance(price, (int, float)):
-                continue
-
-            brand = meta.get("brand", "").lower()
-            category = meta.get("category", "").lower()
-            name = meta.get("name", "").lower()
-            features = meta.get("features_flat", "").lower()
-            sizes = meta.get("sizes_flat", [])
-            variations = meta.get("variations", [])
-
-            # بررسی سایز
-            has_exact_size = True
-            if self.size_preferences:
-                has_exact_size = any(s.upper() in sizes for s in self.size_preferences)
-
-            score = 0
-            max_score = 0
-
-            if self.query_category:
-                max_score += 1
-                if self.query_category.lower() in category or self.query_category.lower() in name:
-                    score += 1
-
-            if self.brand:
-                max_score += 1
-                if self.brand.lower() in brand:
-                    score += 1
-
-            if self.feature_keywords:
-                max_score += 1
-                if any(k.lower() in features or k.lower() in name for k in self.feature_keywords):
-                    score += 1
-
-            if self.size_preferences:
-                max_score += 2
-                if has_exact_size:
-                    score += 2
-
-            # قیمت
-            out_of_range = False
-            if self.price_min and price < self.price_min - 2 * self.price_tolerance:
-                out_of_range = True
-            if self.price_max and price > self.price_max + 2 * self.price_tolerance:
-                out_of_range = True
-            if out_of_range:
-                continue
-
-            price_status = "exact"
-            in_range = True
-            if self.price_min and price < self.price_min:
-                in_range = False
-                price_status = "cheaper"
-            if self.price_max and price > self.price_max:
-                in_range = False
-                price_status = "expensive"
-
-            diff = 0
-            if self.price_min and price < self.price_min:
-                diff = self.price_min - price
-            elif self.price_max and price > self.price_max:
-                diff = price - self.price_max
-
-            if self.price_min or self.price_max:
-                max_score += 2
-                if in_range:
-                    score += 2
-                elif diff <= self.price_tolerance:
-                    score += 1
-                else:
+            for chunk in chunks:
+                meta = chunk.get("metadata", {})
+                price = meta.get("price_numeric", None)
+                if not isinstance(price, (int, float)):
                     continue
 
-            if max_score == 0:
-                continue
-            elif score >= max_score * 0.75 and has_exact_size:
-                exact_matches.append((score, chunk))
-            elif score >= max_score * 0.5:
-                near_matches.append((score, chunk, price_status, diff, has_exact_size))
+                brand = meta.get("brand", "").lower()
+                category = meta.get("category", "").lower()
+                name = meta.get("name", "").lower()
+                features = meta.get("features_flat", "").lower()
+                sizes = meta.get("sizes_flat", [])
+                variations = meta.get("variations", [])
+
+                has_exact_size = True
+                if self.size_preferences:
+                    has_exact_size = any(s.upper() in sizes for s in self.size_preferences)
+
+                score = 0
+                max_score = 0
+
+                if self.query_category:
+                    max_score += 1
+                    if self.query_category.lower() in category or self.query_category.lower() in name:
+                        score += 1
+
+                if self.brand:
+                    max_score += 1
+                    if self.brand.lower() in brand:
+                        score += 1
+
+                if self.feature_keywords:
+                    max_score += 1
+                    if any(k.lower() in features or k.lower() in name for k in self.feature_keywords):
+                        score += 1
+
+                if self.size_preferences:
+                    max_score += 2
+                    if has_exact_size:
+                        score += 2
+
+                out_of_range = False
+                if self.price_min and price < self.price_min - 2 * self.price_tolerance:
+                    out_of_range = True
+                if self.price_max and price > self.price_max + 2 * self.price_tolerance:
+                    out_of_range = True
+                if out_of_range:
+                    continue
+
+                price_status = "exact"
+                in_range = True
+                if self.price_min and price < self.price_min:
+                    in_range = False
+                    price_status = "cheaper"
+                if self.price_max and price > self.price_max:
+                    in_range = False
+                    price_status = "expensive"
+
+                diff = 0
+                if self.price_min and price < self.price_min:
+                    diff = self.price_min - price
+                elif self.price_max and price > self.price_max:
+                    diff = price - self.price_max
+
+                if self.price_min or self.price_max:
+                    max_score += 2
+                    if in_range:
+                        score += 2
+                    elif diff <= self.price_tolerance:
+                        score += 1
+                    else:
+                        continue
+
+                if max_score == 0:
+                    continue
+                elif score >= max_score * 0.75 and has_exact_size:
+                    exact_matches.append((score, chunk))
+                elif score >= max_score * 0.5:
+                    near_matches.append((score, chunk, price_status, diff, has_exact_size))
+
+            return exact_matches, near_matches
+
+        top_chunks = await search_vector_db(rdb, query_vector, top_k=200)
+        exact_matches, near_matches = await filter_chunks(top_chunks)
+
+        if not exact_matches and not near_matches:
+            all_chunks = await get_all_vectors(rdb)
+            exact_matches, near_matches = await filter_chunks(all_chunks)
 
         if not exact_matches and not near_matches:
             return "❌ محصولی مطابق درخواست شما در پایگاه داده پیدا نشد."
@@ -126,15 +133,15 @@ class QueryKnowledgeBaseTool(BaseModel):
             if not has_size:
                 return "⚠️ این محصول سایز دقیق مورد نظر شما را ندارد (مثلاً XL نیست)"
             if diff <= 300_000:
-                return "💡 اگر کمی تفاوت قیمت مشکلی نیست، این مورد مناسبه"
+                return "💡 اگر کمی تفاوت قیمت مشکلی نیست، این مورد مناسبه (قیمت کمی متفاوت)"
             elif diff <= 1_000_000:
-                return "💡 اگر بودجه کمی منعطفه، این گزینه رو بررسی کن"
+                return "💡 اگر بودجه کمی منعطفه، این گزینه رو بررسی کن (اختلاف قیمت متوسط)"
             else:
                 if status == "cheaper":
-                    return "💡 گزینه‌ای اقتصادی‌تر نسبت به درخواست شما"
+                    return "💡 گزینه‌ای اقتصادی‌تر نسبت به درخواست شما (قیمت کمتر)"
                 elif status == "expensive":
-                    return "💡 این مورد کمی گران‌تر از محدوده تعیین‌شده است"
-                return "💡 مورد نزدیک با ویژگی مشابه"
+                    return "💡 این مورد کمی گران‌تر از محدوده تعیین‌شده است (قیمت بیشتر)"
+            return "💡 مورد نزدیک با ویژگی مشابه"
 
         def format_chunk(i, chunk, note=None):
             meta = chunk.get("metadata", {})
