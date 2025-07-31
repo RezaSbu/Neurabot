@@ -1,4 +1,33 @@
-version: '3.8'
+# version: '3.8'
+
+# services:
+#   app:
+#     build: .
+#     depends_on:
+#       - redis
+#     environment:
+#       - ALLOW_ORIGINS
+#       - OPENAI_API_KEY
+#       - MODEL
+#       - EMBEDDING_MODEL
+#       - EMBEDDING_DIMENSIONS
+#       - REDIS_HOST
+#       - REDIS_PORT
+#       - DOCS_DIR
+#       - EXPORT_DIR
+
+#   redis:
+#     image: redis/redis-stack-server:latest
+#     volumes:
+#       - redis_data:/data
+#     environment:
+#       - REDIS_ARGS=--save 600 1 --save 300 10 --save 60 100
+
+# volumes:
+#   redis_data:
+
+
+
 
 services:
   app:
@@ -20,8 +49,10 @@ services:
     image: redis/redis-stack-server:latest
     volumes:
       - redis_data:/data
-    environment:
-      - REDIS_ARGS=--save 600 1 --save 300 10 --save 60 100
+      - ./redis.conf:/usr/local/etc/redis/redis.conf
+    command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
+    ports:
+      - "6379:6379"
 
 volumes:
   redis_data:
