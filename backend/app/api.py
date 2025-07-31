@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 from app.db import get_redis, create_chat, chat_exists, add_chat_messages
 from app.assistants.assistant import RAGAssistant
+import re
 
 class ChatIn(BaseModel):
     message: str
@@ -29,13 +30,13 @@ async def create_new_chat(
     created = int(time())
     client_ip = request.client.host
 
-    # ذخیره چت و session
     await create_chat(rdb, chat_id, created)
     await rdb.set(f'session:{session_id}:chat:{chat_id}', 1, ex=432000)
     await rdb.set(f'session:{session_id}:ip', client_ip, ex=432000)
 
-    # ذخیره یا بازیابی ایمیل
     if email:
+        if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
+            raise HTTPException(status_code=400, detail="فرمت ایمیل وارد شده معتبر نیست.")
         await rdb.set(f'session:{session_id}:email', email, ex=432000)
     else:
         existing_email = await rdb.get(f'session:{session_id}:email')
@@ -59,14 +60,23 @@ async def chat(
     if not await rdb.exists(session_key):
         raise HTTPException(status_code=403, detail='Chat does not belong to your session')
 
-    # ثبت پیام کاربر
+    chat_count_key = f"session:{session_id}:count"
+    chat_count = await rdb.get(chat_count_key)
+    if chat_count and int(chat_count) >= 100:
+        raise HTTPException(status_code=429, detail="تعداد پیام‌های روزانه بیش از حد مجاز است (حداکثر ۱۰۰ پیام)")
+    else:
+        await rdb.incr(chat_count_key)
+        await rdb.expire(chat_count_key, 86400)
+
+    if len(chat_in.message) > 1000:
+        raise HTTPException(status_code=400, detail="پیام خیلی طولانی است (حداکثر ۱۰۰۰ کاراکتر)")
+
     await add_chat_messages(rdb, chat_id, [{
         'role': 'user',
         'content': chat_in.message,
         'created': int(time())
     }])
 
-    # اجرای assistant و جمع‌کردن پاسخ
     assistant = RAGAssistant(chat_id=chat_id, rdb=rdb)
     sse_stream = assistant.run(message=chat_in.message)
 
@@ -78,7 +88,6 @@ async def chat(
                 latest_response["content"] += event.data["content"]
             yield event
 
-        # ثبت پاسخ نهایی
         await add_chat_messages(rdb, chat_id, [{
             'role': 'assistant',
             'content': latest_response["content"],
@@ -86,5 +95,3 @@ async def chat(
         }])
 
     return EventSourceResponse(event_generator(), background=rdb.aclose)
-
-
