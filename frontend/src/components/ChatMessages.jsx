@@ -3,13 +3,6 @@ import Markdown from 'react-markdown';
 import useAutoScroll from '@/hooks/useAutoScroll';
 import Spinner from '@/components/Spinner';
 
-const UserIcon = () => (
-  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-    <circle cx="12" cy="7" r="4" />
-  </svg>
-);
-
 const ErrorIcon = () => (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="red">
     <circle cx="12" cy="12" r="10" />
@@ -19,19 +12,14 @@ const ErrorIcon = () => (
 );
 
 function ChatMessages({ messages, isLoading }) {
-  // ref برای اسکرول خودکار به پایین
   const containerRef = useAutoScroll(messages);
-
-  // تعداد پیام‌های قابل نمایش فعلی
   const [visibleCount, setVisibleCount] = useState(15);
 
-  // برش آخرین visibleCount پیام
   const displayedMessages = useMemo(
     () => messages.slice(-visibleCount),
     [messages, visibleCount]
   );
 
-  // مدیریت infinite scroll هنگام اسکرول به بالای کانتینر
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -40,7 +28,6 @@ function ChatMessages({ messages, isLoading }) {
       if (el.scrollTop === 0 && visibleCount < messages.length) {
         const oldHeight = el.scrollHeight;
         setVisibleCount(prev => Math.min(prev + 10, messages.length));
-        // بعد از رندر مجدد، حفظ موقعیت اسکرول
         requestAnimationFrame(() => {
           const newHeight = el.scrollHeight;
           el.scrollTop = newHeight - oldHeight;
@@ -60,7 +47,21 @@ function ChatMessages({ messages, isLoading }) {
           className={`chat-message ${role === 'user' ? 'chat-message-user' : 'chat-message-assistant'}`}
           dir="rtl"
         >
-          {role === 'user' && <UserIcon />}
+          {/* آواتار چت‌بات و کاربر */}
+          {role === 'user' ? (
+            <img
+              src="/user-avatar.png"
+              alt="User"
+              className="w-8 h-8 rounded-full object-cover"
+            />
+          ) : (
+            <img
+              src="/chatbot2.png"
+              alt="Bot"
+              className="w-8 h-8 rounded-full object-cover"
+            />
+          )}
+
           <div className="flex flex-col text-right text-sm">
             <div className="markdown-container">
               {loading && !content ? (
@@ -86,7 +87,8 @@ function ChatMessages({ messages, isLoading }) {
                 <div className="whitespace-pre-line">{content}</div>
               )}
             </div>
-            {/* نمایش تایم‌استمپ */}
+
+            {/* زمان پیام */}
             {timestamp && (
               <div className="text-xs text-gray-400 self-end mt-1">
                 {new Date(timestamp).toLocaleTimeString('fa-IR', {
@@ -95,6 +97,8 @@ function ChatMessages({ messages, isLoading }) {
                 })}
               </div>
             )}
+
+            {/* نمایش خطا (در صورت وجود) */}
             {error && (
               <div className={`flex items-center gap-1 text-xs text-error-red ${content && 'mt-1'}`}>
                 <ErrorIcon />
