@@ -3,7 +3,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     ALLOW_ORIGINS: str = '*'
     OPENAI_API_KEY: str
-    MODEL: str = "gpt-3.5-turbo"
+    MODEL: str = "gpt-4o-mini"
     EMBEDDING_MODEL: str = 'text-embedding-3-large'
     EMBEDDING_DIMENSIONS: int = 3072
     REDIS_HOST: str = 'localhost'

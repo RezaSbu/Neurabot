@@ -6,6 +6,7 @@ from sse_starlette.sse import EventSourceResponse
 from app.db import get_redis, create_chat, chat_exists, add_chat_messages
 from app.assistants.assistant import RAGAssistant
 import re
+import dns.resolver  # 🟡 برای بررسی MX Record
 
 class ChatIn(BaseModel):
     message: str
@@ -16,6 +17,15 @@ async def get_rdb():
         yield rdb
     finally:
         await rdb.aclose()
+
+# ✅ بررسی MX Record دامنه‌ی ایمیل
+def check_email_domain_exists(email: str) -> bool:
+    try:
+        domain = email.split('@')[1]
+        dns.resolver.resolve(domain, 'MX')
+        return True
+    except Exception:
+        return False
 
 router = APIRouter()
 
@@ -37,6 +47,8 @@ async def create_new_chat(
     if email:
         if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
             raise HTTPException(status_code=400, detail="فرمت ایمیل وارد شده معتبر نیست.")
+        if not check_email_domain_exists(email):
+            raise HTTPException(status_code=400, detail="دامنه ایمیل وجود ندارد یا معتبر نیست.")
         await rdb.set(f'session:{session_id}:email', email, ex=432000)
     else:
         existing_email = await rdb.get(f'session:{session_id}:email')
