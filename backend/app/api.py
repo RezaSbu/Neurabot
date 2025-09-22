@@ -3,22 +3,31 @@ from time import time
 from fastapi import APIRouter, Depends, HTTPException, Header, Request
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
-from app.db import get_redis, create_chat, chat_exists, add_chat_messages
+from app.redis_client import get_redis
+from app.db import create_chat, chat_exists, add_chat_messages
 from app.assistants.assistant import RAGAssistant
 import re
-import dns.resolver  # 🟡 برای بررسی MX Record
+import dns.resolver
+from app.metrics_collector import metrics_collector
+from app.ab_testing import ab_testing
 
 class ChatIn(BaseModel):
     message: str
+    user_id: str = None
+
+class Feedback(BaseModel):
+    chat_id: str
+    message_id: str
+    feedback: str
+    comment: str = None
 
 async def get_rdb():
     rdb = get_redis()
     try:
         yield rdb
     finally:
-        await rdb.aclose()
+        await rdb.close()
 
-# ✅ بررسی MX Record دامنه‌ی ایمیل
 def check_email_domain_exists(email: str) -> bool:
     try:
         domain = email.split('@')[1]
@@ -61,49 +70,67 @@ async def create_new_chat(
 async def chat(
     chat_id: str,
     chat_in: ChatIn,
-    session_id: str = Header(..., alias='X-Session-ID')
+    session_id: str = Header(..., alias='X-Session-ID'),
+    user_id: str = Header(None, alias='X-User-ID')
 ):
     rdb = get_redis()
+    try:
+        if not await chat_exists(rdb, chat_id):
+            raise HTTPException(status_code=404, detail=f'Chat {chat_id} does not exist')
 
-    if not await chat_exists(rdb, chat_id):
-        raise HTTPException(status_code=404, detail=f'Chat {chat_id} does not exist')
+        session_key = f'session:{session_id}:chat:{chat_id}'
+        if not await rdb.exists(session_key):
+            raise HTTPException(status_code=403, detail='Chat does not belong to your session')
 
-    session_key = f'session:{session_id}:chat:{chat_id}'
-    if not await rdb.exists(session_key):
-        raise HTTPException(status_code=403, detail='Chat does not belong to your session')
+        chat_count_key = f"session:{session_id}:count"
+        chat_count = await rdb.get(chat_count_key)
+        if chat_count and int(chat_count) >= 100:
+            raise HTTPException(status_code=429, detail="تعداد پیام‌های روزانه بیش از حد مجاز است (حداکثر ۱۰۰ پیام)")
+        else:
+            await rdb.incr(chat_count_key)
+            await rdb.expire(chat_count_key, 86400)
 
-    chat_count_key = f"session:{session_id}:count"
-    chat_count = await rdb.get(chat_count_key)
-    if chat_count and int(chat_count) >= 100:
-        raise HTTPException(status_code=429, detail="تعداد پیام‌های روزانه بیش از حد مجاز است (حداکثر ۱۰۰ پیام)")
-    else:
-        await rdb.incr(chat_count_key)
-        await rdb.expire(chat_count_key, 86400)
-
-    if len(chat_in.message) > 1000:
-        raise HTTPException(status_code=400, detail="پیام خیلی طولانی است (حداکثر ۱۰۰۰ کاراکتر)")
-
-    await add_chat_messages(rdb, chat_id, [{
-        'role': 'user',
-        'content': chat_in.message,
-        'created': int(time())
-    }])
-
-    assistant = RAGAssistant(chat_id=chat_id, rdb=rdb)
-    sse_stream = assistant.run(message=chat_in.message)
-
-    latest_response = {"content": ""}
-
-    async def event_generator():
-        async for event in sse_stream:
-            if isinstance(event.data, dict) and "content" in event.data:
-                latest_response["content"] += event.data["content"]
-            yield event
+        if len(chat_in.message) > 1000:
+            raise HTTPException(status_code=400, detail="پیام خیلی طولانی است (حداکثر ۱۰۰۰ کاراکتر)")
 
         await add_chat_messages(rdb, chat_id, [{
-            'role': 'assistant',
-            'content': latest_response["content"],
+            'role': 'user',
+            'content': chat_in.message,
             'created': int(time())
         }])
 
-    return EventSourceResponse(event_generator(), background=rdb.aclose)
+        assistant = RAGAssistant(chat_id=chat_id, rdb=rdb)
+        sse_stream = assistant.run(message=chat_in.message, user_id=user_id or session_id)
+
+        latest_response = {"content": ""}
+
+        async def event_generator():
+            async for event in sse_stream:
+                if isinstance(event.data, dict) and "content" in event.data:
+                    latest_response["content"] += event.data["content"]
+                yield event
+
+            await add_chat_messages(rdb, chat_id, [{
+                'role': 'assistant',
+                'content': latest_response["content"],
+                'created': int(time())
+            }])
+
+        return EventSourceResponse(event_generator())
+    finally:
+        await rdb.close()
+
+@router.post('/feedback')
+async def submit_feedback(feedback: Feedback):
+    await metrics_collector.record_user_feedback(
+        feedback.chat_id, 
+        feedback.message_id, 
+        feedback.feedback, 
+        feedback.comment
+    )
+    return {"status": "success"}
+
+@router.get('/metrics')
+async def get_metrics(metric_name: str, time_range: int = 86400):
+    metrics = await metrics_collector.get_metrics(metric_name, time_range)
+    return {"metrics": metrics}

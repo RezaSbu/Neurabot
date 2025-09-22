@@ -1,39 +1,56 @@
 import asyncpg
 import re
+import asyncio
 from app.config import settings
 from app.db import get_all_chats
+from app.redis_client import get_redis
+import logging
+
+logger = logging.getLogger(__name__)
 
 # اتصال به PostgreSQL
 async def get_pg_pool():
-    return await asyncpg.create_pool(dsn=settings.POSTGRES_DSN)
+    try:
+        return await asyncpg.create_pool(dsn=settings.POSTGRES_DSN)
+    except Exception as e:
+        logger.error(f"Failed to connect to PostgreSQL: {e}")
+        return None
 
 # ساخت جداول در صورت نیاز
 async def setup_postgres(pool):
+    if pool is None:
+        logger.warning("PostgreSQL pool is None, skipping setup")
+        return
+        
     async with pool.acquire() as conn:
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS sessions (
-                session_id TEXT PRIMARY KEY,
-                ip TEXT,
-                email TEXT,
-                created BIGINT
-            );
-        """)
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS chats (
-                id TEXT PRIMARY KEY,
-                created BIGINT,
-                session_id TEXT REFERENCES sessions(session_id)
-            );
-        """)
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS messages (
-                id SERIAL PRIMARY KEY,
-                chat_id TEXT REFERENCES chats(id),
-                role TEXT,
-                content TEXT,
-                created BIGINT
-            );
-        """)
+        try:
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS sessions (
+                    session_id TEXT PRIMARY KEY,
+                    ip TEXT,
+                    email TEXT,
+                    created BIGINT
+                );
+            """)
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS chats (
+                    id TEXT PRIMARY KEY,
+                    created BIGINT,
+                    session_id TEXT REFERENCES sessions(session_id)
+                );
+            """)
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS messages (
+                    id SERIAL PRIMARY KEY,
+                    chat_id TEXT REFERENCES chats(id),
+                    role TEXT,
+                    content TEXT,
+                    created BIGINT
+                );
+            """)
+            logger.info("PostgreSQL tables created successfully")
+        except Exception as e:
+            logger.error(f"Error setting up PostgreSQL tables: {e}")
 
 # استخراج session_id و chat_id از کلیدهای Redis
 def extract_session_data(keys):
@@ -46,11 +63,20 @@ def extract_session_data(keys):
 
 # اجرای sync دائمی Redis → PostgreSQL
 async def sync_chats_forever(redis, pg_pool):
+    if pg_pool is None:
+        logger.warning("PostgreSQL pool is None, skipping sync")
+        return
+        
     while True:
         try:
             keys = await redis.keys("session:*:chat:*")
             session_chat_pairs = extract_session_data(keys)
             chats = await get_all_chats(redis)
+
+            if not chats:
+                logger.info("No chats to sync")
+                await asyncio.sleep(30)
+                continue
 
             async with pg_pool.acquire() as conn:
                 for chat in chats:
@@ -101,10 +127,9 @@ async def sync_chats_forever(redis, pg_pool):
                             VALUES ($1, $2, $3, $4)
                         """, chat_id, msg["role"], msg["content"], msg.get("created", 0))
 
-            print(f"[SYNC] ✅ Synced {len(chats)} chats")
+            logger.info(f"[SYNC] ✅ Synced {len(chats)} chats")
 
         except Exception as e:
-            print(f"[SYNC ERROR] {e}")
+            logger.error(f"[SYNC ERROR] {e}")
 
-        from asyncio import sleep
-        await sleep(5)
+        await asyncio.sleep(30)  # کاهش فاصله همگام‌سازی به 30 ثانیه

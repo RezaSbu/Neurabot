@@ -1,18 +1,24 @@
 import json
 import os
 import asyncio
+import csv
 from uuid import uuid4
 from tqdm import tqdm
 from app.utils.splitter import TextSplitter
-from app.openai import get_embeddings, token_size
-from app.db import get_redis, setup_db, add_chunks_to_vector_db
+from app.model_manager import model_manager
+from app.redis_client import get_redis
+from app.db import setup_db, add_chunks_to_vector_db_batch
 from app.config import settings
+from app.cache_manager import cache_manager
+from app.openai import token_size
 
 def batchify(iterable, batch_size):
+    """تقسیم لیست به دسته‌های کوچکتر"""
     for i in range(0, len(iterable), batch_size):
         yield iterable[i:i + batch_size]
 
 def load_json_file(path):
+    """بارگذاری فایل JSON"""
     try:
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
@@ -20,7 +26,21 @@ def load_json_file(path):
         print(f"Error loading JSON file {path}: {e}")
         return []
 
+def load_csv_file(path):
+    """بارگذاری فایل CSV"""
+    try:
+        data = []
+        with open(path, "r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                data.append(row)
+        return data
+    except Exception as e:
+        print(f"Error loading CSV file {path}: {e}")
+        return []
+
 def normalize_budget_range(price_numeric):
+    """نرمال‌سازی محدوده قیمت"""
     if not isinstance(price_numeric, (int, float)):
         return "unknown"
     if price_numeric < 500_000:
@@ -37,28 +57,42 @@ def normalize_budget_range(price_numeric):
         return "over_20m"
 
 async def process_docs(docs_dir=settings.DOCS_DIR):
+    """پردازش اسناد"""
     docs = []
     print('\nLoading documents')
 
-    files = [f for f in os.listdir(docs_dir) if f.endswith('.json')]
+    files = [f for f in os.listdir(docs_dir) if f.endswith('.json') or f.endswith('.csv')]
     if not files:
-        print(f"No JSON files found in {docs_dir}")
+        print(f"No JSON or CSV files found in {docs_dir}")
         return []
 
     for filename in tqdm(files, desc="Processing files"):
         file_path = os.path.join(docs_dir, filename)
         doc_name = os.path.splitext(filename)[0]
 
-        data = load_json_file(file_path)
+        if filename.endswith('.json'):
+            data = load_json_file(file_path)
+        elif filename.endswith('.csv'):
+            data = load_csv_file(file_path)
+        
         if not data or not isinstance(data, list):
-            print(f"Invalid or empty JSON structure in {filename}")
+            print(f"Invalid or empty data structure in {filename}")
             continue
 
         for item in data:
-            attributes = {attr["label"]: attr["value"] for attr in item.get("attributes", [])}
-            features = {feat["label"]: feat["value"] for feat in item.get("features", [])}
-            variations = item.get("variations", [])
-            category = item.get("category", "نامشخص")
+            # پردازش داده‌ها بر اساس نوع (JSON یا CSV)
+            if filename.endswith('.json'):
+                attributes = {attr["label"]: attr["value"] for attr in item.get("attributes", [])}
+                features = {feat["label"]: feat["value"] for feat in item.get("features", [])}
+                variations = item.get("variations", [])
+                category = item.get("category", "نامشخص")
+                price_numeric = item.get('price_numeric', 0)
+            else:  # CSV
+                attributes = {}
+                features = {}
+                variations = []
+                category = item.get("category", "نامشخص")
+                price_numeric = float(item.get('price_numeric', 0)) if item.get('price_numeric') else 0
 
             strict_category = category if category in [
                 "کلاه کاسکت", "پوشاک موتورسواری", "لاستیک موتور سیکلت",
@@ -67,14 +101,13 @@ async def process_docs(docs_dir=settings.DOCS_DIR):
                 "سایر"
             ] else "نامشخص"
 
-            price_numeric = item.get('price_numeric', 0)
             budget_range = normalize_budget_range(price_numeric)
 
             features_flat = "، ".join([f"{k}: {v}" for k, v in features.items()])
             sizes_flat = [v.get("size", "").upper() for v in variations if v.get("size")]
 
             metadata = {
-                'name': item.get('title', 'محصول ناشناس'),
+                'name': item.get('title', item.get('name', 'محصول ناشناس')),
                 'price': item.get('price', 'نامشخص'),
                 'price_numeric': price_numeric,
                 'budget_range': budget_range,
@@ -94,8 +127,8 @@ async def process_docs(docs_dir=settings.DOCS_DIR):
             }
 
             text_parts = []
-            if 'title' in item:
-                text_parts.append(f"نام محصول: {item['title']}")
+            if 'title' in item or 'name' in item:
+                text_parts.append(f"نام محصول: {item.get('title', item.get('name', 'محصول ناشناس'))}")
             if 'price' in item:
                 text_parts.append(f"قیمت: {item['price']}")
             if 'brand' in item:
@@ -120,7 +153,7 @@ async def process_docs(docs_dir=settings.DOCS_DIR):
                 text_parts.append(f"تصویر: {item['image']}")
 
             text_block = "\n".join(text_parts)
-            docs.append((item.get('title', 'محصول'), text_block, metadata))
+            docs.append((item.get('title', item.get('name', 'محصول')), text_block, metadata))
 
     print(f'Loaded {len(docs)} documents')
 
@@ -157,7 +190,7 @@ async def process_docs(docs_dir=settings.DOCS_DIR):
     with tqdm(total=len(chunks), desc="Embedding chunks") as pbar:
         for batch in batchify(chunks, batch_size=64):
             try:
-                batch_vectors = await get_embeddings([chunk['text'] for chunk in batch])
+                batch_vectors = await model_manager.get_embeddings_batch([chunk['text'] for chunk in batch])
                 vectors.extend(batch_vectors)
                 pbar.update(len(batch))
             except Exception as e:
@@ -171,16 +204,20 @@ async def process_docs(docs_dir=settings.DOCS_DIR):
     return chunks
 
 async def load_knowledge_base():
-    async with get_redis() as rdb:
+    """بارگذاری دانش‌بیس"""
+    rdb = get_redis()
+    try:
         print('Setting up Redis database')
         await setup_db(rdb)
         chunks = await process_docs()
         if chunks:
             print('\nAdding chunks to vector db')
-            await add_chunks_to_vector_db(rdb, chunks)
+            await add_chunks_to_vector_db_batch(rdb, chunks)
             print('\nKnowledge base loaded')
         else:
             print('\nNo chunks to add to vector db')
+    finally:
+        await rdb.close()
 
 def main():
     asyncio.run(load_knowledge_base())
