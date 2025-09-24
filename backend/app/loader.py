@@ -7,6 +7,7 @@ from app.utils.splitter import TextSplitter
 from app.openai import get_embeddings, token_size
 from app.db import get_redis, setup_db, add_chunks_to_vector_db
 from app.config import settings
+from parsivar import Normalizer, FindStems
 
 def batchify(iterable, batch_size):
     for i in range(0, len(iterable), batch_size):
@@ -38,6 +39,8 @@ def normalize_budget_range(price_numeric):
 
 async def process_docs(docs_dir=settings.DOCS_DIR):
     docs = []
+    normalizer = Normalizer()
+    stemmer = FindStems()
     print('\nLoading documents')
 
     files = [f for f in os.listdir(docs_dir) if f.endswith('.json')]
@@ -70,7 +73,8 @@ async def process_docs(docs_dir=settings.DOCS_DIR):
             price_numeric = item.get('price_numeric', 0)
             budget_range = normalize_budget_range(price_numeric)
 
-            features_flat = "، ".join([f"{k}: {v}" for k, v in features.items()])
+            # Normalize and stem features for cleaner text
+            features_flat = "، ".join([f"{k}: {stemmer.convert_to_stem(normalizer.normalize(str(v)))}" for k, v in features.items()])
             sizes_flat = [v.get("size", "").upper() for v in variations if v.get("size")]
 
             metadata = {
@@ -93,69 +97,107 @@ async def process_docs(docs_dir=settings.DOCS_DIR):
                 'description': item.get('description', '')
             }
 
-            text_parts = []
+            # Semantic chunking: split into meaningful sections
+            chunks = []
+            doc_id = str(uuid4())[:8]
+
+            # Chunk 1: Basic info (title, price, brand, category)
+            basic_info = []
             if 'title' in item:
-                text_parts.append(f"نام محصول: {item['title']}")
+                basic_info.append(f"نام محصول: {normalizer.normalize(item['title'])}")
             if 'price' in item:
-                text_parts.append(f"قیمت: {item['price']}")
+                basic_info.append(f"قیمت: {normalizer.normalize(item['price'])}")
             if 'brand' in item:
-                text_parts.append(f"برند: {item['brand']}")
+                basic_info.append(f"برند: {normalizer.normalize(item['brand'])}")
             if strict_category != "نامشخص":
-                text_parts.append(f"دسته‌بندی: {strict_category}")
+                basic_info.append(f"دسته‌بندی: {strict_category}")
+            if basic_info:
+                chunks.append({
+                    'chunk_id': f'{doc_id}:0001',
+                    'text': "\n".join(basic_info),
+                    'doc_name': doc_name,
+                    'vector': None,
+                    'metadata': metadata
+                })
+
+            # Chunk 2: Features
             if features:
-                text_parts.append("ویژگی‌ها:")
+                feature_text = ["ویژگی‌ها:"]
                 for key, value in features.items():
-                    text_parts.append(f"  - {key}: {value}")
-            if variations:
-                text_parts.append("سایزها و موجودی:")
-                for var in variations:
-                    text_parts.append(f"  - سایز: {var.get('size', 'نامشخص')}، موجودی: {var.get('stock', 'نامشخص')}")
+                    feature_text.append(f"  - {key}: {stemmer.convert_to_stem(normalizer.normalize(str(value)))}")
+                chunks.append({
+                    'chunk_id': f'{doc_id}:0002',
+                    'text': "\n".join(feature_text),
+                    'doc_name': doc_name,
+                    'vector': None,
+                    'metadata': metadata
+                })
+
+            # Chunk 3: Description
             if 'description' in item and item['description']:
-                text_parts.append(f"توضیحات: {item['description']}")
-            if 'tags' in item and item['tags']:
-                text_parts.append(f"تگ‌ها: {', '.join(item['tags'])}")
-            if 'url' in item:
-                text_parts.append(f"لینک محصول: {item['url']}")
-            if 'image' in item:
-                text_parts.append(f"تصویر: {item['image']}")
+                chunks.append({
+                    'chunk_id': f'{doc_id}:0003',
+                    'text': f"توضیحات: {normalizer.normalize(item['description'])}",
+                    'doc_name': doc_name,
+                    'vector': None,
+                    'metadata': metadata
+                })
 
-            text_block = "\n".join(text_parts)
-            docs.append((item.get('title', 'محصول'), text_block, metadata))
+            # Chunk 4: Variations and other metadata
+            if variations or 'tags' in item or 'url' in item or 'image' in item:
+                extra_info = []
+                if variations:
+                    extra_info.append("سایزها و موجودی:")
+                    for var in variations:
+                        extra_info.append(f"  - سایز: {var.get('size', 'نامشخص')}، موجودی: {var.get('stock', 'نامشخص')}")
+                if 'tags' in item and item['tags']:
+                    extra_info.append(f"تگ‌ها: {', '.join(item['tags'])}")
+                if 'url' in item:
+                    extra_info.append(f"لینک محصول: {item['url']}")
+                if 'image' in item:
+                    extra_info.append(f"تصویر: {item['image']}")
+                if extra_info:
+                    chunks.append({
+                        'chunk_id': f'{doc_id}:0004',
+                        'text': "\n".join(extra_info),
+                        'doc_name': doc_name,
+                        'vector': None,
+                        'metadata': metadata
+                    })
 
-    print(f'Loaded {len(docs)} documents')
+            docs.extend(chunks)
+
+    print(f'Loaded {len(docs)} chunks')
 
     if not docs:
-        print("No valid documents to process")
+        print("No valid chunks to process")
         return []
 
-    chunks = []
-    text_splitter = TextSplitter(chunk_size=512, chunk_overlap=150)
-    print('\nSplitting documents into chunks')
+    text_splitter = TextSplitter(chunk_size=256, chunk_overlap=50)  # Smaller size, 20% overlap
+    refined_chunks = []
+    print('\nRefining chunks for size constraints')
 
-    for doc_name, doc_text, metadata in tqdm(docs, desc="Splitting documents"):
-        doc_id = str(uuid4())[:8]
-        doc_chunks = text_splitter.split(doc_text)
-        for chunk_idx, chunk_text in enumerate(doc_chunks):
-            chunk = {
-                'chunk_id': f'{doc_id}:{chunk_idx+1:04}',
-                'text': chunk_text,
-                'doc_name': doc_name,
+    for chunk in tqdm(docs, desc="Refining chunks"):
+        doc_chunks = text_splitter.split(chunk['text'])
+        for idx, sub_chunk_text in enumerate(doc_chunks):
+            refined_chunks.append({
+                'chunk_id': f"{chunk['chunk_id'].split(':')[0]}:{idx+1:04}",
+                'text': sub_chunk_text,
+                'doc_name': chunk['doc_name'],
                 'vector': None,
-                'metadata': metadata
-            }
-            chunks.append(chunk)
-        print(f'{doc_name}: {len(doc_chunks)} chunks')
+                'metadata': chunk['metadata']
+            })
 
-    chunk_sizes = [token_size(c['text']) for c in chunks]
-    print(f'\nTotal chunks: {len(chunks)}')
+    chunk_sizes = [token_size(c['text']) for c in refined_chunks]
+    print(f'\nTotal chunks: {len(refined_chunks)}')
     print(f'Min chunk size: {min(chunk_sizes)} tokens')
     print(f'Max chunk size: {max(chunk_sizes)} tokens')
-    print(f'Average chunk size: {round(sum(chunk_sizes)/len(chunks))} tokens')
+    print(f'Average chunk size: {round(sum(chunk_sizes)/len(refined_chunks))} tokens')
 
     vectors = []
     print('\nEmbedding chunks')
-    with tqdm(total=len(chunks), desc="Embedding chunks") as pbar:
-        for batch in batchify(chunks, batch_size=64):
+    with tqdm(total=len(refined_chunks), desc="Embedding chunks") as pbar:
+        for batch in batchify(refined_chunks, batch_size=128):
             try:
                 batch_vectors = await get_embeddings([chunk['text'] for chunk in batch])
                 vectors.extend(batch_vectors)
@@ -165,10 +207,10 @@ async def process_docs(docs_dir=settings.DOCS_DIR):
                 vectors.extend([None] * len(batch))
                 pbar.update(len(batch))
 
-    for chunk, vector in zip(chunks, vectors):
+    for chunk, vector in zip(refined_chunks, vectors):
         chunk['vector'] = vector if vector else [0.0] * settings.EMBEDDING_DIMENSIONS
 
-    return chunks
+    return refined_chunks
 
 async def load_knowledge_base():
     async with get_redis() as rdb:

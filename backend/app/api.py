@@ -6,7 +6,7 @@ from sse_starlette.sse import EventSourceResponse
 from app.db import get_redis, create_chat, chat_exists, add_chat_messages
 from app.assistants.assistant import RAGAssistant
 import re
-import dns.resolver  # 🟡 برای بررسی MX Record
+import dns.resolver
 
 class ChatIn(BaseModel):
     message: str
@@ -18,7 +18,6 @@ async def get_rdb():
     finally:
         await rdb.aclose()
 
-# ✅ بررسی MX Record دامنه‌ی ایمیل
 def check_email_domain_exists(email: str) -> bool:
     try:
         domain = email.split('@')[1]

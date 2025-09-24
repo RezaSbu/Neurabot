@@ -13,13 +13,6 @@ class Settings(BaseSettings):
     VECTOR_SEARCH_TOP_K: int = 10
     POSTGRES_DSN: str
 
-
     model_config = SettingsConfigDict(env_file='.env')
 
 settings = Settings()
-
-
-
-
-
-

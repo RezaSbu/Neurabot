@@ -2,7 +2,7 @@ import json
 import numpy as np
 from time import time
 from redis.asyncio import Redis
-from redis.commands.search.field import TextField, VectorField, NumericField
+from redis.commands.search.field import TextField, VectorField, NumericField, TagField
 from redis.commands.search.indexDefinition import IndexDefinition, IndexType
 from redis.commands.search.query import Query
 from redis.commands.json.path import Path
@@ -13,26 +13,25 @@ VECTOR_IDX_PREFIX = 'vector:'
 CHAT_IDX_NAME = 'idx:chat'
 CHAT_IDX_PREFIX = 'chat:'
 
-
-# اتصال به Redis
 def get_redis():
     return Redis(host=settings.REDIS_HOST, port=settings.REDIS_PORT)
-
-
-# ------------------------ VECTORS ------------------------
 
 async def create_vector_index(rdb):
     schema = (
         TextField('$.chunk_id', no_stem=True, as_name='chunk_id'),
         TextField('$.text', as_name='text'),
         TextField('$.doc_name', as_name='doc_name'),
+        TagField('$.metadata.category', as_name='category'),
+        TagField('$.metadata.budget_range', as_name='budget_range'),
         VectorField(
             '$.vector',
-            'FLAT',
+            'HNSW',
             {
                 'TYPE': 'FLOAT32',
                 'DIM': settings.EMBEDDING_DIMENSIONS,
-                'DISTANCE_METRIC': 'COSINE'
+                'DISTANCE_METRIC': 'COSINE',
+                'M': 40,
+                'EF_CONSTRUCTION': 200
             },
             as_name='vector'
         )
@@ -42,7 +41,7 @@ async def create_vector_index(rdb):
             fields=schema,
             definition=IndexDefinition(prefix=[VECTOR_IDX_PREFIX], index_type=IndexType.JSON)
         )
-        print(f"Vector index '{VECTOR_IDX_NAME}' created successfully")
+        print(f"Vector index '{VECTOR_IDX_NAME}' created successfully with HNSW")
     except Exception as e:
         print(f"Error creating vector index '{VECTOR_IDX_NAME}': {e}")
 
@@ -52,11 +51,19 @@ async def add_chunks_to_vector_db(rdb, chunks):
             pipe.json().set(VECTOR_IDX_PREFIX + chunk['chunk_id'], Path.root_path(), chunk)
         await pipe.execute()
 
-async def search_vector_db(rdb, query_vector, top_k=settings.VECTOR_SEARCH_TOP_K):
+async def search_vector_db(rdb, query_vector, top_k=settings.VECTOR_SEARCH_TOP_K, category=None, budget_range=None):
+    query_str = f'(*)=>[KNN {top_k} @vector $query_vector AS score]'
+    if category:
+        query_str = f'(@category:{{{category}}})=>[KNN {top_k} @vector $query_vector AS score]'
+    if budget_range:
+        query_str = f'(@budget_range:{{{budget_range}}})=>[KNN {top_k} @vector $query_vector AS score]'
+    if category and budget_range:
+        query_str = f'(@category:{{{category}}} @budget_range:{{{budget_range}}})=>[KNN {top_k} @vector $query_vector AS score]'
+    
     query = (
-        Query(f'(*)=>[KNN {top_k} @vector $query_vector AS score]')
+        Query(query_str)
         .sort_by('score')
-        .return_fields('score', 'chunk_id', 'text', 'doc_name')
+        .return_fields('score', 'chunk_id', 'text', 'doc_name', 'category', 'budget_range')
         .dialect(2)
     )
     res = await rdb.ft(VECTOR_IDX_NAME).search(query, {
@@ -66,16 +73,15 @@ async def search_vector_db(rdb, query_vector, top_k=settings.VECTOR_SEARCH_TOP_K
         'score': 1 - float(d.score),
         'chunk_id': d.chunk_id,
         'text': d.text,
-        'doc_name': d.doc_name
+        'doc_name': d.doc_name,
+        'category': d.category,
+        'budget_range': d.budget_range
     } for d in res.docs]
 
 async def get_all_vectors(rdb):
     count = await rdb.ft(VECTOR_IDX_NAME).search(Query('*').paging(0, 0))
     res = await rdb.ft(VECTOR_IDX_NAME).search(Query('*').paging(0, count.total))
     return [json.loads(doc.json) for doc in res.docs]
-
-
-# ------------------------ CHATS ------------------------
 
 async def create_chat_index(rdb):
     try:
@@ -90,7 +96,6 @@ async def create_chat_index(rdb):
     except Exception as e:
         print(f"Error creating chat index '{CHAT_IDX_NAME}': {e}")
 
-# ✅ نسخه نهایی با تنظیم TTL پیش‌فرض 7 روز (604800 ثانیه)
 async def create_chat(rdb, chat_id, created, ttl_seconds=172800):
     chat = {'id': chat_id, 'created': created, 'messages': []}
     key = CHAT_IDX_PREFIX + chat_id
@@ -98,7 +103,6 @@ async def create_chat(rdb, chat_id, created, ttl_seconds=172800):
     await rdb.expire(key, ttl_seconds)
     return chat
 
-# ✅ افزودن created در صورت نبود
 async def add_chat_messages(rdb, chat_id, messages):
     timestamped = []
     for msg in messages:
@@ -126,9 +130,6 @@ async def get_all_chats(rdb):
     res = await rdb.ft(CHAT_IDX_NAME).search(q.paging(0, count.total))
     return [json.loads(doc.json) for doc in res.docs]
 
-
-# ------------------------ GENERAL ------------------------
-
 async def setup_db(rdb):
     try:
         await rdb.ft(VECTOR_IDX_NAME).dropindex(delete_documents=True)
@@ -150,4 +151,3 @@ async def clear_db(rdb):
             print(f"Deleted index '{index_name}' and all associated documents")
         except Exception as e:
             print(f"Index '{index_name}': {e}")
-
