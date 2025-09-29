@@ -1,9 +1,10 @@
 import json
+import asyncio
 import numpy as np
 from time import time
 from redis.asyncio import Redis
 from redis.commands.search.field import TextField, VectorField, NumericField, TagField
-from redis.commands.search.indexDefinition import IndexDefinition, IndexType
+from redis.commands.search.index_definition import IndexDefinition, IndexType
 from redis.commands.search.query import Query
 from redis.commands.json.path import Path
 from app.config import settings
@@ -19,8 +20,12 @@ def get_redis():
 async def create_vector_index(rdb):
     schema = (
         TextField('$.chunk_id', no_stem=True, as_name='chunk_id'),
-        TextField('$.text', as_name='text'),
-        TextField('$.doc_name', as_name='doc_name'),
+        TextField('$.text', as_name='text', weight=1.0),
+        TextField('$.doc_name', as_name='doc_name', weight=0.5),
+        TextField('$.metadata.name', as_name='name', weight=3.0),
+        TextField('$.metadata.features_flat', as_name='features', weight=2.0),
+        TagField('$.metadata.brand', as_name='brand'),
+        TagField('$.metadata.sizes_flat[*]', as_name='sizes'),
         TagField('$.metadata.category', as_name='category'),
         TagField('$.metadata.budget_range', as_name='budget_range'),
         VectorField(
@@ -63,20 +68,129 @@ async def search_vector_db(rdb, query_vector, top_k=settings.VECTOR_SEARCH_TOP_K
     query = (
         Query(query_str)
         .sort_by('score')
-        .return_fields('score', 'chunk_id', 'text', 'doc_name', 'category', 'budget_range')
+        # Return only the score; we'll read full JSON from doc.json
+        .return_fields('score')
         .dialect(2)
     )
     res = await rdb.ft(VECTOR_IDX_NAME).search(query, {
         'query_vector': np.array(query_vector, dtype=np.float32).tobytes()
     })
-    return [{
-        'score': 1 - float(d.score),
-        'chunk_id': d.chunk_id,
-        'text': d.text,
-        'doc_name': d.doc_name,
-        'category': d.category,
-        'budget_range': d.budget_range
-    } for d in res.docs]
+    results = []
+    for d in res.docs:
+        try:
+            full_doc = json.loads(d.json)
+        except Exception:
+            full_doc = {}
+        full_doc['score'] = 1 - float(d.score)
+        results.append(full_doc)
+    return results
+
+async def search_keyword_db(rdb, query_text, top_k=settings.VECTOR_SEARCH_TOP_K, category=None, budget_range=None):
+    # Helpers
+    def escape_tag_value(val: str) -> str:
+        if val is None:
+            return ''
+        # Escape spaces and braces for TAG values
+        return val.replace(' ', '\\ ').replace('{', '\\{').replace('}', '\\}')
+
+    # Weighted field query: prioritize name > features > text
+    if query_text and query_text.strip():
+        escaped = query_text.replace('"', '\\"')
+        base_query = f'((@name:"{escaped}") | (@features:"{escaped}") | (@text:"{escaped}"))'
+    else:
+        base_query = "*"
+
+    cat_filter = f'@category:{{{escape_tag_value(category)}}}' if category else ''
+    bud_filter = f'@budget_range:{{{escape_tag_value(budget_range)}}}' if budget_range else ''
+    filters = ' '.join([f for f in [cat_filter, bud_filter] if f])
+    query_str = f'{filters} {base_query}'.strip()
+
+    query = (
+        Query(query_str)
+        .return_fields('score')
+        .paging(0, top_k)
+        .dialect(2)
+    )
+    res = await rdb.ft(VECTOR_IDX_NAME).search(query)
+    results = []
+    for d in res.docs:
+        try:
+            full_doc = json.loads(d.json)
+        except Exception:
+            full_doc = {}
+        # RediSearch BM25 returns a numeric score; higher is better. Keep as-is for normalization later
+        try:
+            kw_score = float(d.score)
+        except Exception:
+            kw_score = 0.0
+        full_doc['kw_score'] = kw_score
+        results.append(full_doc)
+    return results
+
+async def search_hybrid_db(
+    rdb,
+    query_vector,
+    query_text,
+    top_k=settings.VECTOR_SEARCH_TOP_K,
+    category=None,
+    budget_range=None,
+    alpha: float = 0.6,
+):
+    # Run vector and keyword searches independently
+    vec_results, kw_results = await asyncio.gather(
+        search_vector_db(rdb, query_vector, top_k=top_k, category=category, budget_range=budget_range),
+        search_keyword_db(rdb, query_text, top_k=top_k, category=category, budget_range=budget_range),
+    )
+
+    # Normalize vector scores (already 0..1 roughly). Ensure in [0,1]
+    for r in vec_results:
+        r['vec_score'] = max(0.0, min(1.0, float(r.get('score', 0.0))))
+
+    # Normalize keyword scores using min-max over present scores
+    kw_scores = [float(r.get('kw_score', 0.0)) for r in kw_results if r.get('kw_score') is not None]
+    if kw_scores:
+        kw_min, kw_max = min(kw_scores), max(kw_scores)
+        denom = (kw_max - kw_min) or 1.0
+        for r in kw_results:
+            r['kw_score_norm'] = (float(r.get('kw_score', 0.0)) - kw_min) / denom
+    else:
+        for r in kw_results:
+            r['kw_score_norm'] = 0.0
+
+    # Merge by chunk_id
+    by_id = {}
+    def cid(doc):
+        return doc.get('chunk_id') or doc.get('metadata', {}).get('chunk_id')
+
+    for r in vec_results:
+        key = cid(r) or r.get('chunk_id')
+        if not key:
+            key = r.get('metadata', {}).get('product_id') or id(r)
+        by_id[key] = r
+        by_id[key]['kw_score_norm'] = by_id[key].get('kw_score_norm', 0.0)
+
+    for r in kw_results:
+        key = cid(r) or r.get('chunk_id')
+        if not key:
+            key = r.get('metadata', {}).get('product_id') or id(r)
+        if key in by_id:
+            by_id[key]['kw_score_norm'] = r.get('kw_score_norm', 0.0)
+        else:
+            # ensure vec score exists
+            r['vec_score'] = max(0.0, min(1.0, float(r.get('score', 0.0))))
+            by_id[key] = r
+
+    # Compute combined score
+    combined = []
+    for doc in by_id.values():
+        vec_s = float(doc.get('vec_score', doc.get('score', 0.0)))
+        kw_s = float(doc.get('kw_score_norm', 0.0))
+        doc['hybrid_score'] = alpha * vec_s + (1 - alpha) * kw_s
+        combined.append(doc)
+
+    # Sort by combined score desc and return top_k
+    combined.sort(key=lambda d: d.get('hybrid_score', 0.0), reverse=True)
+    return combined[:top_k]
 
 async def get_all_vectors(rdb):
     count = await rdb.ft(VECTOR_IDX_NAME).search(Query('*').paging(0, 0))

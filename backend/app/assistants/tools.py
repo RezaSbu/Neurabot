@@ -1,9 +1,11 @@
 from pydantic import BaseModel, Field
-from typing import Optional, List
-from app.db import search_vector_db, get_all_vectors
+from typing import Optional, List, Dict, Any
+from app.db import search_hybrid_db, get_all_vectors
 from app.openai import get_embedding
 import numpy as np
 from numpy.linalg import norm
+import re
+import json
 
 class QueryKnowledgeBaseTool(BaseModel):
     query_input: str = Field(..., description="User query")
@@ -79,6 +81,30 @@ class QueryKnowledgeBaseTool(BaseModel):
                 else:
                     query_category = query_lower.split()[0]
 
+        def persian_digits_to_en(s: str) -> str:
+            digits_map = str.maketrans('۰۱۲۳۴۵۶۷۸۹', '0123456789')
+            return s.translate(digits_map)
+
+        def extract_prices_from_text(text: str):
+            t = persian_digits_to_en(text.lower())
+            # capture patterns like 'تا 1.5 تومن', 'بین 2 و 3 میلیون', '1 میلیون', '900 تومن'
+            numbers = [m.group() for m in re.finditer(r"\d+(?:[\.,]\d+)?", t)]
+            # heuristics: if words 'بین' and two numbers -> min/max
+            pmin, pmax = None, None
+            if 'بین' in t and len(numbers) >= 2:
+                pmin = float(numbers[0].replace(',', '.'))
+                pmax = float(numbers[1].replace(',', '.'))
+            elif 'تا' in t and numbers:
+                pmin = None
+                pmax = float(numbers[0].replace(',', '.'))
+            elif numbers:
+                # single number; treat as max
+                pmax = float(numbers[0].replace(',', '.'))
+
+            # unit scaling: 'میلیون' or 'm' => million tomans; 'تومن' without qualifier we treat heuristically
+            scale = 1_000_000 if ('میلیون' in t or 'm' in t) else 1_000 if ('هزار' in t or 'k' in t) else None
+            return pmin, pmax, scale
+
         def parse_price(price: Optional[float]) -> Optional[float]:
             if price is None:
                 return None
@@ -92,10 +118,29 @@ class QueryKnowledgeBaseTool(BaseModel):
                 return price * 1_000
 
         # Parse price_min and price_max
+        if self.price_min is None and self.price_max is None and isinstance(self.query_input, str):
+            pmin_txt, pmax_txt, unit_scale = extract_prices_from_text(self.query_input)
+            if pmin_txt is not None:
+                self.price_min = pmin_txt
+            if pmax_txt is not None:
+                self.price_max = pmax_txt
+            if unit_scale:
+                # convert textual units
+                if self.price_min is not None:
+                    self.price_min *= unit_scale
+                if self.price_max is not None:
+                    self.price_max *= unit_scale
+
         self.price_min = parse_price(self.price_min)
         self.price_max = parse_price(self.price_max)
 
         query_vector = await get_embedding(self.query_input)
+
+        # Flags for economical preference
+        ql = self.query_input.lower()
+        economical_preference = any(k in ql for k in ["به صرفه", "اقتصادی", "ارزان", "econ", "budget"]) or (
+            self.price_max is not None and self.price_max > 0
+        )
 
         async def filter_chunks(chunks):
             exact_matches = []
@@ -227,7 +272,7 @@ class QueryKnowledgeBaseTool(BaseModel):
 
             return exact_matches, near_matches
 
-        top_chunks = await search_vector_db(rdb, query_vector, top_k=200)
+        top_chunks = await search_hybrid_db(rdb, query_vector, self.query_input, top_k=200)
         exact_matches, near_matches = await filter_chunks(top_chunks)
 
         if not exact_matches and not near_matches:
@@ -256,8 +301,16 @@ class QueryKnowledgeBaseTool(BaseModel):
                     final_score += 0.5
                 if has_size and self.size_preferences:
                     final_score += 0.5
+
+                # Economical boost: prefer lower price if requested
+                if economical_preference:
+                    meta = chunk.get("metadata", {})
+                    price_num = meta.get("price_numeric") or 0
+                    # Inverse price factor (normalized by 10M to avoid huge numbers)
+                    final_score += max(0.0, 1.0 - (price_num / 10_000_000))
                 ranked.append((final_score, chunk, status, diff, has_size))
-            return sorted(ranked, reverse=True)[:10]
+            ranked_sorted = sorted(ranked, reverse=True)
+            return ranked_sorted[:20]
 
         def format_note(status, diff, has_size):
             notes = []
@@ -275,47 +328,66 @@ class QueryKnowledgeBaseTool(BaseModel):
                 notes.append("💡 این مورد گران‌تر از محدوده تعیین‌شده است (قیمت بیشتر)")
             return " | ".join(notes) if notes else "💡 مورد نزدیک با ویژگی‌های مشابه"
 
-        def format_chunk(i, chunk, note=None):
+        def product_from_chunk(chunk: Dict[str, Any]) -> Dict[str, Any]:
             meta = chunk.get("metadata", {})
-            name = meta.get("name", "بدون نام")
-            price = meta.get("price", "نامشخص")
-            link = meta.get("link", "")
-            image = meta.get("image", "")
-            stock_note = ""
             variations = meta.get("variations", [])
-            if isinstance(variations, list):
-                for v in variations:
-                    if v.get("stock", "").startswith("1"):
-                        stock_note = "⚠️ موجودی محدود!"
-                        break
             sizes = [v.get("size", "") for v in variations if v.get("size")]
-            features = meta.get("features_flat", "")
-            line = (
-                f"{i}. **{name}**\n"
-                f"💰 قیمت: {price}\n"
-                f"{stock_note}\n"
-                f"📏 سایزها: {', '.join(sizes) if sizes else 'نامشخص'}\n"
-                f"🔍 ویژگی‌ها: {features if features else 'نامشخص'}\n"
-                f"🖼️ تصویر: {image}\n"
-                f"🔗 [مشاهده محصول]({link})"
-            )
-            return f"{line}\n📌 {note}" if note else line
+            return {
+                "product_id": meta.get("product_id", ""),
+                "name": meta.get("name", "بدون نام"),
+                "price": meta.get("price", "نامشخص"),
+                "price_numeric": meta.get("price_numeric", 0),
+                "brand": meta.get("brand", "نامشخص"),
+                "category": meta.get("category", "نامشخص"),
+                "link": meta.get("link", ""),
+                "image": meta.get("image", ""),
+                "sizes": sizes,
+                "features": meta.get("features_flat", ""),
+            }
+
+        def dedup_and_diversify(ranked_items: List[tuple], limit: int = 10) -> List[Dict[str, Any]]:
+            seen_products = set()
+            seen_names = set()
+            brand_counts: Dict[str, int] = {}
+            results: List[Dict[str, Any]] = []
+            for _, chunk, status, diff, has_size in ranked_items:
+                prod = product_from_chunk(chunk)
+                pid = prod.get("product_id") or prod.get("name")
+                if pid in seen_products:
+                    continue
+                name_key = prod.get("name", "").lower()
+                if name_key in seen_names:
+                    continue
+                brand = (prod.get("brand") or "").lower()
+                # Brand diversity: allow at most 2 per brand initially
+                if brand_counts.get(brand, 0) >= 2 and len(results) < limit - 2:
+                    continue
+                prod["note"] = format_note(status, diff, has_size)
+                results.append(prod)
+                seen_products.add(pid)
+                seen_names.add(name_key)
+                brand_counts[brand] = brand_counts.get(brand, 0) + 1
+                if len(results) >= limit:
+                    break
+            return results
 
         exact_ranked = rank(exact_matches)
         near_ranked = rank(near_matches, with_status=True)
 
-        output = []
+        exact_products = dedup_and_diversify(exact_ranked, limit=6)
+        near_products = dedup_and_diversify(near_ranked, limit=6)
 
-        if exact_ranked:
-            output.append("✅ **نتایج دقیق مطابق درخواست شما:**\n")
-            for i, (final_score, chunk, _, _, _) in enumerate(exact_ranked, 1):
-                note = format_note(None, 0, True)
-                output.append(format_chunk(i, chunk, note))
+        response_obj = {
+            "category": query_category,
+            "filters": {
+                "price_min": self.price_min,
+                "price_max": self.price_max,
+                "brand": self.brand,
+                "size_preferences": self.size_preferences or [],
+                "economical": economical_preference,
+            },
+            "exact": exact_products,
+            "near": near_products,
+        }
 
-        if near_ranked:
-            output.append("\n🔄 **موارد نزدیک با تفاوت جزئی (اولویت با قیمت، سپس سایز یا ویژگی‌ها):**\n")
-            for i, (final_score, chunk, status, diff, has_size) in enumerate(near_ranked, len(exact_ranked) + 1):
-                note = format_note(status, diff, has_size)
-                output.append(format_chunk(i, chunk, note))
-
-        return "\n\n---\n\n".join(output) + "\n\n---\nاین موارد چطور بودن؟ مورد دیگه‌ای نیاز داری؟ 😊"
+        return json.dumps(response_obj, ensure_ascii=False)
