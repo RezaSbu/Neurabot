@@ -161,9 +161,13 @@ class QueryKnowledgeBaseTool(BaseModel):
                 sizes = meta.get("sizes_flat", [])
                 variations = meta.get("variations", [])
 
-                # Strict category matching
-                if query_category.lower() not in category and query_category.lower() not in name:
-                    continue
+                # Relaxed category matching: allow partials and synonym proximity
+                if query_category:
+                    qcat = query_category.lower()
+                    if not (qcat in category or qcat in name or any(word in category or word in name for word in qcat.split())):
+                        # still allow if features strongly match
+                        if not any(k in features for k in (self.feature_keywords or [])):
+                            continue
 
                 has_exact_size = True
                 if self.size_preferences:

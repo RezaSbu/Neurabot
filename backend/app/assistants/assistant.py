@@ -8,7 +8,7 @@ import asyncio
 from app.utils.sse_stream import SSEStream
 
 class RAGAssistant:
-    def __init__(self, chat_id, rdb, history_size=30, max_tool_calls=3):
+    def __init__(self, chat_id, rdb, history_size=30, max_tool_calls=10):
         self.chat_id = chat_id
         self.rdb = rdb
         self.sse_stream = None
@@ -29,12 +29,18 @@ class RAGAssistant:
 
     async def _handle_tool_calls(self, tool_calls, chat_messages):
         any_result = False
-        for call in tool_calls[:self.max_tool_calls]:
-            kb_args = call.function.parsed_arguments
-            kb_result = await kb_args(self.rdb)
-            chat_messages.append({'role': 'tool', 'tool_call_id': call.id, 'content': kb_result})
-            if "یافت نشد" not in kb_result:
-                any_result = True
+        executed = 0
+        # Execute up to max_tool_calls; reply to the rest with a noop message so API is satisfied
+        for call in tool_calls:
+            if executed < self.max_tool_calls:
+                kb_args = call.function.parsed_arguments
+                kb_result = await kb_args(self.rdb)
+                chat_messages.append({'role': 'tool', 'tool_call_id': call.id, 'content': kb_result})
+                executed += 1
+                if "یافت نشد" not in kb_result:
+                    any_result = True
+            else:
+                chat_messages.append({'role': 'tool', 'tool_call_id': call.id, 'content': 'Skipped due to tool call limit.'})
 
         if any_result:
             return await self._generate_chat_response(
