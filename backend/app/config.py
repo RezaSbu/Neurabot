@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     REDIS_PORT: int = 6379
     DOCS_DIR: str = 'data/docs'
     EXPORT_DIR: str = 'data'
-    VECTOR_SEARCH_TOP_K: int = 10
+    VECTOR_SEARCH_TOP_K: int = 200
     POSTGRES_DSN: str
 
     model_config = SettingsConfigDict(env_file='.env')

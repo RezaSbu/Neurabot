@@ -4,7 +4,10 @@ import numpy as np
 from time import time
 from redis.asyncio import Redis
 from redis.commands.search.field import TextField, VectorField, NumericField, TagField
-from redis.commands.search.index_definition import IndexDefinition, IndexType
+try:
+    from redis.commands.search.indexDefinition import IndexDefinition, IndexType
+except ImportError:
+    from redis.commands.search.index_definition import IndexDefinition, IndexType
 from redis.commands.search.query import Query
 from redis.commands.json.path import Path
 from app.config import settings
@@ -134,7 +137,7 @@ async def search_hybrid_db(
     top_k=settings.VECTOR_SEARCH_TOP_K,
     category=None,
     budget_range=None,
-    alpha: float = 0.6,
+    alpha: float = 0.7,
 ):
     # Run vector and keyword searches independently
     vec_results, kw_results = await asyncio.gather(

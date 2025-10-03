@@ -8,6 +8,7 @@ from app.openai import get_embeddings, token_size
 from app.db import get_redis, setup_db, add_chunks_to_vector_db
 from app.config import settings
 from parsivar import Normalizer, FindStems
+import csv
 
 def batchify(iterable, batch_size):
     for i in range(0, len(iterable), batch_size):
@@ -20,6 +21,17 @@ def load_json_file(path):
     except Exception as e:
         print(f"Error loading JSON file {path}: {e}")
         return []
+
+def load_csv_file(path):
+    rows = []
+    try:
+        with open(path, newline='', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
+            for r in reader:
+                rows.append(r)
+    except Exception as e:
+        print(f"Error loading CSV file {path}: {e}")
+    return rows
 
 def normalize_budget_range(price_numeric):
     if not isinstance(price_numeric, (int, float)):
@@ -43,19 +55,68 @@ async def process_docs(docs_dir=settings.DOCS_DIR):
     stemmer = FindStems()
     print('\nLoading documents')
 
-    files = [f for f in os.listdir(docs_dir) if f.endswith('.json')]
+    files = [f for f in os.listdir(docs_dir) if f.endswith('.json') or f.endswith('.csv')]
     if not files:
-        print(f"No JSON files found in {docs_dir}")
+        print(f"No data files found in {docs_dir}")
         return []
 
     for filename in tqdm(files, desc="Processing files"):
         file_path = os.path.join(docs_dir, filename)
         doc_name = os.path.splitext(filename)[0]
 
-        data = load_json_file(file_path)
-        if not data or not isinstance(data, list):
-            print(f"Invalid or empty JSON structure in {filename}")
-            continue
+        if filename.endswith('.json'):
+            data = load_json_file(file_path)
+            if not data or not isinstance(data, list):
+                print(f"Invalid or empty JSON structure in {filename}")
+                continue
+        else:
+            csv_rows = load_csv_file(file_path)
+            if not csv_rows:
+                print(f"Empty CSV {filename}")
+                continue
+            # Map CSV rows to the expected item structure
+            data = []
+            for r in csv_rows:
+                try:
+                    # Attempt to parse complex fields if provided as JSON strings
+                    def parse_jsonish(val):
+                        if not val:
+                            return []
+                        try:
+                            return json.loads(val)
+                        except Exception:
+                            return []
+
+                    attributes = parse_jsonish(r.get('attributes'))
+                    features = parse_jsonish(r.get('features'))
+                    variations = parse_jsonish(r.get('variations'))
+                    tags = parse_jsonish(r.get('tags'))
+
+                    price_numeric = None
+                    try:
+                        price_numeric = float(r.get('price_numeric')) if r.get('price_numeric') not in [None, ''] else None
+                    except Exception:
+                        price_numeric = None
+
+                    item = {
+                        'title': r.get('title') or r.get('name') or '',
+                        'price': r.get('price') or '',
+                        'price_numeric': price_numeric or 0,
+                        'brand': r.get('brand') or '',
+                        'category': r.get('category') or 'نامشخص',
+                        'url': r.get('url') or r.get('link') or '',
+                        'stock': r.get('stock') or '',
+                        'attributes': attributes,
+                        'features': features,
+                        'variations': variations,
+                        'tags': tags,
+                        'product_id': r.get('product_id') or r.get('id') or '',
+                        'image': r.get('image') or r.get('image_url') or '',
+                        'description': r.get('description') or '',
+                    }
+                    data.append(item)
+                except Exception as e:
+                    print(f"CSV row skipped due to error: {e}")
 
         for item in data:
             attributes = {attr["label"]: attr["value"] for attr in item.get("attributes", [])}

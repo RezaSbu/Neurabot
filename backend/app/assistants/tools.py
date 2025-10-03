@@ -47,6 +47,16 @@ class QueryKnowledgeBaseTool(BaseModel):
                 "گردگیر": "لوازم جانبی موتورسیکلت",
                 "لوازم جانبی": "لوازم جانبی موتورسیکلت",
                 "لوازم": "لوازم جانبی موتورسیکلت",
+                # English/common forms
+                "helmet": "کلاه کاسکت",
+                "casco": "کلاه کاسکت",
+                "glove": "پوشاک موتورسواری",
+                "tire": "لاستیک موتور سیکلت",
+                "tyre": "لاستیک موتور سیکلت",
+                "rim": "لاستیک موتور سیکلت",
+                "brake fluid": "روغن ترمز",
+                "engine oil": "روغن موتور",
+                "motor oil": "روغن موتور",
             }
             # First check synonyms
             for keyword, category in synonym_map.items():
@@ -87,23 +97,28 @@ class QueryKnowledgeBaseTool(BaseModel):
 
         def extract_prices_from_text(text: str):
             t = persian_digits_to_en(text.lower())
-            # capture patterns like 'تا 1.5 تومن', 'بین 2 و 3 میلیون', '1 میلیون', '900 تومن'
-            numbers = [m.group() for m in re.finditer(r"\d+(?:[\.,]\d+)?", t)]
-            # heuristics: if words 'بین' and two numbers -> min/max
-            pmin, pmax = None, None
-            if 'بین' in t and len(numbers) >= 2:
-                pmin = float(numbers[0].replace(',', '.'))
-                pmax = float(numbers[1].replace(',', '.'))
-            elif 'تا' in t and numbers:
-                pmin = None
-                pmax = float(numbers[0].replace(',', '.'))
-            elif numbers:
-                # single number; treat as max
-                pmax = float(numbers[0].replace(',', '.'))
+            t = t.replace('تومان', 'ت').replace('تومن', 'ت').replace('میلیون', 'm').replace('میلیارد', 'b').replace('هزار', 'k')
+            # range patterns: "بین X و Y", "X تا Y", "X - Y", "X الی Y"
+            range_patterns = [
+                r'بین\s*(\d+(?:[\.,]\d+)?)\s*و\s*(\d+(?:[\.,]\d+)?)',
+                r'(\d+(?:[\.,]\d+)?)\s*(?:تا|الی|-)\s*(\d+(?:[\.,]\d+)?)'
+            ]
+            for rp in range_patterns:
+                m = re.search(rp, t)
+                if m:
+                    pmin = float(m.group(1).replace(',', '.'))
+                    pmax = float(m.group(2).replace(',', '.'))
+                    unit_scale = 1_000_000 if ('m' in t or 'ت' in t) else (1_000 if ('k' in t) else None)
+                    if unit_scale:
+                        pmin *= unit_scale; pmax *= unit_scale
+                    return pmin, pmax, None
 
-            # unit scaling: 'میلیون' or 'm' => million tomans; 'تومن' without qualifier we treat heuristically
-            scale = 1_000_000 if ('میلیون' in t or 'm' in t) else 1_000 if ('هزار' in t or 'k' in t) else None
-            return pmin, pmax, scale
+            numbers = [m.group() for m in re.finditer(r"\d+(?:[\.,]\d+)?", t)]
+            pmin, pmax = None, None
+            if numbers:
+                pmax = float(numbers[-1].replace(',', '.'))
+            unit_scale = 1_000_000 if ('m' in t or 'ت' in t) else (1_000 if ('k' in t) else None)
+            return pmin, pmax, unit_scale
 
         def parse_price(price: Optional[float]) -> Optional[float]:
             if price is None:
@@ -298,7 +313,15 @@ class QueryKnowledgeBaseTool(BaseModel):
                     sim = np.dot(query_vector, chunk["vector"]) / (norm(query_vector) * norm(chunk["vector"]))
                 except:
                     sim = 0
-                final_score = score + (sim * 1.5)
+                final_score = score + (sim * 2.0)
+                # light stock-aware adjustment
+                try:
+                    stock_val = chunk.get("metadata", {}).get("stock")
+                    low_stock = isinstance(stock_val, (int, float)) and stock_val < 5
+                    if low_stock:
+                        final_score -= 0.2
+                except:
+                    pass
                 if diff <= self.price_tolerance:
                     final_score += 1
                 elif diff <= 2 * self.price_tolerance:
@@ -378,8 +401,40 @@ class QueryKnowledgeBaseTool(BaseModel):
         exact_ranked = rank(exact_matches)
         near_ranked = rank(near_matches, with_status=True)
 
-        exact_products = dedup_and_diversify(exact_ranked, limit=6)
-        near_products = dedup_and_diversify(near_ranked, limit=6)
+        # Merge exact first, then near, cap at 10, guarantee at least 5 near if exact few
+        def to_products(items, limit):
+            out = []
+            seen = set()
+            for _, chunk, status, diff, has_size in items:
+                meta = chunk.get("metadata", {})
+                pid = meta.get("product_id") or meta.get("name")
+                if pid in seen:
+                    continue
+                prod = product_from_chunk(chunk)
+                prod["note"] = format_note(status, diff, has_size)
+                out.append(prod)
+                seen.add(pid)
+                if len(out) >= limit:
+                    break
+            return out
+
+        exact_products = to_products(exact_ranked, limit=10)
+        near_products = []
+        if len(exact_products) < 10:
+            near_products = to_products(near_ranked, limit=10 - len(exact_products))
+            if len(exact_products) < 5 and len(near_products) < 5:
+                # try to extend near to at least 5 when exact are scarce
+                need = 5 - len(near_products)
+                for _, chunk, status, diff, has_size in near_ranked[len(near_products):]:
+                    meta = chunk.get("metadata", {})
+                    pid = meta.get("product_id") or meta.get("name")
+                    if any(p.get("product_id") == pid or p.get("name") == meta.get("name") for p in (exact_products + near_products)):
+                        continue
+                    prod = product_from_chunk(chunk)
+                    prod["note"] = format_note(status, diff, has_size)
+                    near_products.append(prod)
+                    if len(near_products) >= 5:
+                        break
 
         response_obj = {
             "category": query_category,
