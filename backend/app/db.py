@@ -3,10 +3,46 @@ import asyncio
 import numpy as np
 from time import time
 from redis.asyncio import Redis
-from redis.commands.search.field import TextField, VectorField, NumericField, TagField
-from redis.commands.search.index_definition import IndexDefinition, IndexType
-from redis.commands.search.query import Query
-from redis.commands.json.path import Path
+try:
+    from redis.commands.search.field import TextField, VectorField, NumericField, TagField
+    from redis.commands.search.index_definition import IndexDefinition, IndexType
+    from redis.commands.search.query import Query
+    from redis.commands.json.path import Path
+    REDIS_SEARCH_AVAILABLE = True
+except ImportError:
+    # Fallback for older Redis versions
+    REDIS_SEARCH_AVAILABLE = False
+    print("Redis Search not available - using fallback functions")
+    
+    # Import fallback functions
+    from app.db_fallback import (
+        get_redis as fallback_get_redis,
+        setup_db as fallback_setup_db,
+        create_chat as fallback_create_chat,
+        chat_exists as fallback_chat_exists,
+        add_chat_messages as fallback_add_chat_messages,
+        get_chat_messages as fallback_get_chat_messages,
+        add_chunks_to_vector_db as fallback_add_chunks_to_vector_db,
+        search_hybrid_db as fallback_search_hybrid_db,
+        search_vector_db as fallback_search_vector_db,
+        search_keyword_db as fallback_search_keyword_db,
+        get_all_vectors as fallback_get_all_vectors,
+        get_all_chats as fallback_get_all_chats
+    )
+    
+    # Replace functions with fallbacks
+    get_redis = fallback_get_redis
+    setup_db = fallback_setup_db
+    create_chat = fallback_create_chat
+    chat_exists = fallback_chat_exists
+    add_chat_messages = fallback_add_chat_messages
+    get_chat_messages = fallback_get_chat_messages
+    add_chunks_to_vector_db = fallback_add_chunks_to_vector_db
+    search_hybrid_db = fallback_search_hybrid_db
+    search_vector_db = fallback_search_vector_db
+    search_keyword_db = fallback_search_keyword_db
+    get_all_vectors = fallback_get_all_vectors
+    get_all_chats = fallback_get_all_chats
 from app.config import settings
 
 VECTOR_IDX_NAME = 'idx:vector'
