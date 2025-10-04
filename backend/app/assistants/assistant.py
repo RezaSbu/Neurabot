@@ -1,16 +1,18 @@
 from app.assistants.prompts import MAIN_SYSTEM_PROMPT, RAG_SYSTEM_PROMPT
-from app.openai import chat_stream
+from app.openai import chat_stream, token_size
 from app.db import get_chat_messages, add_chat_messages
 from app.assistants.tools import QueryKnowledgeBaseTool
 from openai import pydantic_function_tool
 from time import time
 import asyncio
 from app.utils.sse_stream import SSEStream
+from app.config import settings  # اضافه شده
 
 class RAGAssistant:
-    def __init__(self, chat_id, rdb, history_size=30, max_tool_calls=10):
+    def __init__(self, chat_id, rdb, model=None, history_size=30, max_tool_calls=10):
         self.chat_id = chat_id
         self.rdb = rdb
+        self.model = model or settings.MODEL  # استفاده از مدل DeepSeek
         self.sse_stream = None
         self.main_system_message = {'role': 'system', 'content': MAIN_SYSTEM_PROMPT}
         self.rag_system_message = {'role': 'system', 'content': RAG_SYSTEM_PROMPT}
@@ -20,7 +22,8 @@ class RAGAssistant:
 
     async def _generate_chat_response(self, system_message, chat_messages, **kwargs):
         messages = [system_message, *chat_messages]
-        async with chat_stream(messages=messages, **kwargs) as stream:
+        # استفاده از مدل مشخص شده
+        async with chat_stream(messages=messages, model=self.model, **kwargs) as stream:
             async for event in stream:
                 if event.type == 'content.delta':
                     await self.sse_stream.send(event.delta)

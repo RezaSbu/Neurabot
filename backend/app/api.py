@@ -7,6 +7,7 @@ from app.db import get_redis, create_chat, chat_exists, add_chat_messages
 from app.assistants.assistant import RAGAssistant
 import re
 import dns.resolver
+from app.config import settings  # اضافه شده
 
 class ChatIn(BaseModel):
     message: str
@@ -88,7 +89,8 @@ async def chat(
         'created': int(time())
     }])
 
-    assistant = RAGAssistant(chat_id=chat_id, rdb=rdb)
+    # استفاده از مدل DeepSeek از تنظیمات
+    assistant = RAGAssistant(chat_id=chat_id, rdb=rdb, model=settings.MODEL)
     sse_stream = assistant.run(message=chat_in.message)
 
     latest_response = {"content": ""}
