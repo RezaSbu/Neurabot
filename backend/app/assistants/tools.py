@@ -291,9 +291,25 @@ class QueryKnowledgeBaseTool(BaseModel):
 
             return exact_matches, near_matches
 
+        # Initial hybrid search
         top_chunks = await search_hybrid_db(rdb, query_vector, self.query_input, top_k=200)
         exact_matches, near_matches = await filter_chunks(top_chunks)
 
+        # Smart fallback: if results are scarce, temporarily favor keyword (lower alpha) and widen recall (higher top_k)
+        if (len(exact_matches) + len(near_matches)) < 5:
+            widened = await search_hybrid_db(
+                rdb,
+                query_vector,
+                self.query_input,
+                top_k=400,
+                alpha=0.4,
+            )
+            ex2, nr2 = await filter_chunks(widened)
+            # Prefer newly found when they improve coverage
+            if (len(ex2) + len(nr2)) > (len(exact_matches) + len(near_matches)):
+                exact_matches, near_matches = ex2, nr2
+
+        # Absolute fallback: scan all vectors if still empty
         if not exact_matches and not near_matches:
             all_chunks = await get_all_vectors(rdb)
             exact_matches, near_matches = await filter_chunks(all_chunks)
@@ -308,7 +324,8 @@ class QueryKnowledgeBaseTool(BaseModel):
                     score, chunk, status, diff, has_size = item
                 else:
                     score, chunk = item
-                    status, diff, has_size = None, 0, True
+                    # Treat exact matches as exact with no price diff by default
+                    status, diff, has_size = "exact", 0, True
                 try:
                     sim = np.dot(query_vector, chunk["vector"]) / (norm(query_vector) * norm(chunk["vector"]))
                 except:
@@ -412,6 +429,13 @@ class QueryKnowledgeBaseTool(BaseModel):
                     continue
                 prod = product_from_chunk(chunk)
                 prod["note"] = format_note(status, diff, has_size)
+                # Provide explicit reason fields for transparency
+                try:
+                    prod["reason_status"] = status or "near"
+                    prod["reason_price_diff"] = int(diff) if isinstance(diff, (int, float)) else 0
+                    prod["reason_size_match"] = bool(has_size)
+                except Exception:
+                    pass
                 out.append(prod)
                 seen.add(pid)
                 if len(out) >= limit:
