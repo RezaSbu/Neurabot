@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 from app.db import get_redis, create_chat, chat_exists, add_chat_messages
 from app.assistants.assistant import RAGAssistant
+from app.assistants.enhanced_assistant import EnhancedRAGAssistant
 import re
 import dns.resolver
 from app.config import settings  # اضافه شده
@@ -89,8 +90,8 @@ async def chat(
         'created': int(time())
     }])
 
-    # استفاده از مدل DeepSeek از تنظیمات
-    assistant = RAGAssistant(chat_id=chat_id, rdb=rdb, model=settings.MODEL)
+    # استفاده از چت‌بات پیشرفته
+    assistant = EnhancedRAGAssistant(chat_id=chat_id, rdb=rdb, model=settings.MODEL)
     sse_stream = assistant.run(message=chat_in.message)
 
     latest_response = {"content": ""}
@@ -108,3 +109,22 @@ async def chat(
         }])
 
     return EventSourceResponse(event_generator(), background=rdb.aclose)
+
+@router.get('/metrics')
+async def get_metrics(days: int = 7):
+    """دریافت گزارش متریک‌های سیستم"""
+    try:
+        # ایجاد یک instance از EnhancedRAGAssistant برای دسترسی به متریک‌ها
+        rdb = get_redis()
+        assistant = EnhancedRAGAssistant("metrics_chat", rdb)
+        
+        metrics_report = assistant.get_metrics_report(days)
+        quality_analysis = assistant.get_quality_analysis()
+        
+        return {
+            "success": True,
+            "metrics": metrics_report,
+            "quality_analysis": quality_analysis
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"خطا در دریافت متریک‌ها: {str(e)}")

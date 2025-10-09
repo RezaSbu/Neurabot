@@ -16,6 +16,20 @@
     @apply absolute -top-1 left-0 h-full w-full content-[''] rounded-full bg-primary-orange opacity-0;
   }
 
+  .markdown-container {
+    @apply max-w-full overflow-hidden break-words;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+    white-space: pre-wrap;
+    line-height: 1.6;
+  }
+
+  .markdown-container > div {
+    @apply break-words;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+  }
+
   .markdown-container p {
     @apply mb-5 leading-8;
   }
@@ -78,7 +92,9 @@
   }
 
   .chat-message {
-    @apply flex flex-row-reverse items-start gap-4 py-3 px-4 rounded-2xl shadow-sm transition-shadow duration-200 hover:shadow-md;
+    @apply flex flex-row-reverse items-start gap-4 py-3 px-4 rounded-2xl shadow-sm transition-shadow duration-200 hover:shadow-md max-w-full;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
   }
 
   .chat-message-user {
@@ -86,6 +102,23 @@
   }
 
   .chat-message-assistant {
-    @apply bg-gray-200 text-gray-900;
+    @apply bg-gray-200 text-gray-900 max-w-full;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+  }
+
+  /* برای جلوگیری از overflow در موبایل */
+  @media (max-width: 768px) {
+    .chat-messages {
+      @apply px-2;
+    }
+    
+    .markdown-container {
+      @apply text-sm;
+    }
+    
+    .chat-message {
+      @apply px-2;
+    }
   }
 }

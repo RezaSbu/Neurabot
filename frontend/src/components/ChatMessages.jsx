@@ -15,6 +15,25 @@ function ChatMessages({ messages, isLoading }) {
   const containerRef = useAutoScroll(messages);
   const [visibleCount, setVisibleCount] = useState(15);
 
+  // Debug: Log messages to console to understand the structure
+  useEffect(() => {
+    if (messages.length > 0) {
+      console.log('Messages structure:', messages);
+    }
+  }, [messages]);
+
+  // Function to clean and format message content
+  const formatMessageContent = (content) => {
+    if (!content) return '';
+    
+    // Remove any unwanted formatting characters and normalize whitespace
+    return content
+      .replace(/\n\s*\n/g, '\n\n') // Normalize multiple newlines
+      .replace(/^\s+|\s+$/g, '') // Trim whitespace
+      .replace(/\r\n/g, '\n') // Normalize line endings
+      .replace(/\r/g, '\n'); // Convert old Mac line endings
+  };
+
   const displayedMessages = useMemo(
     () => messages.slice(-visibleCount),
     [messages, visibleCount]
@@ -81,10 +100,10 @@ function ChatMessages({ messages, isLoading }) {
                     ),
                   }}
                 >
-                  {content}
+                  {formatMessageContent(content)}
                 </Markdown>
               ) : (
-                <div className="whitespace-pre-line">{content}</div>
+                <div className="whitespace-pre-wrap break-words">{formatMessageContent(content)}</div>
               )}
             </div>
 
