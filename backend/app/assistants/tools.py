@@ -418,8 +418,8 @@ class QueryKnowledgeBaseTool(BaseModel):
         exact_ranked = rank(exact_matches)
         near_ranked = rank(near_matches, with_status=True)
 
-        # Merge exact first, then near, cap at 10, guarantee at least 5 near if exact few
-        def to_products(items, limit):
+        # نمایش حداکثری محصولات - بدون محدودیت سخت
+        def to_products(items, max_limit=50):  # افزایش حد حداکثر
             out = []
             seen = set()
             for _, chunk, status, diff, has_size in items:
@@ -438,27 +438,30 @@ class QueryKnowledgeBaseTool(BaseModel):
                     pass
                 out.append(prod)
                 seen.add(pid)
-                if len(out) >= limit:
+                if len(out) >= max_limit:  # حد بالاتر برای نمایش بیشتر
                     break
             return out
 
-        exact_products = to_products(exact_ranked, limit=10)
-        near_products = []
-        if len(exact_products) < 10:
-            near_products = to_products(near_ranked, limit=10 - len(exact_products))
-            if len(exact_products) < 5 and len(near_products) < 5:
-                # try to extend near to at least 5 when exact are scarce
-                need = 5 - len(near_products)
-                for _, chunk, status, diff, has_size in near_ranked[len(near_products):]:
-                    meta = chunk.get("metadata", {})
-                    pid = meta.get("product_id") or meta.get("name")
-                    if any(p.get("product_id") == pid or p.get("name") == meta.get("name") for p in (exact_products + near_products)):
-                        continue
-                    prod = product_from_chunk(chunk)
-                    prod["note"] = format_note(status, diff, has_size)
-                    near_products.append(prod)
-                    if len(near_products) >= 5:
-                        break
+        # نمایش حداکثری: ابتدا تمام محصولات دقیق، سپس تمام محصولات نزدیک
+        exact_products = to_products(exact_ranked, max_limit=50)  # افزایش حد
+        near_products = to_products(near_ranked, max_limit=50)  # نمایش تمام محصولات نزدیک
+        
+        # اگر محصولات دقیق کم هستند، محصولات نزدیک بیشتری اضافه کن
+        if len(exact_products) < 5 and len(near_products) > 0:
+            # تا 20 محصول نزدیک اضافه کن اگر محصولات دقیق کم هستند
+            additional_near = to_products(near_ranked[len(near_products):], max_limit=20)
+            near_products.extend(additional_near)
+
+        # ترکیب تمام محصولات برای نمایش حداکثری
+        all_products = exact_products + near_products
+        
+        # آمار کامل برای شفافیت
+        stats = {
+            "total_found": len(all_products),
+            "exact_matches": len(exact_products),
+            "near_matches": len(near_products),
+            "search_strategy": "maximal_display"  # نشان‌دهنده نمایش حداکثری
+        }
 
         response_obj = {
             "category": query_category,
@@ -471,6 +474,8 @@ class QueryKnowledgeBaseTool(BaseModel):
             },
             "exact": exact_products,
             "near": near_products,
+            "all_products": all_products,  # تمام محصولات در یک لیست
+            "stats": stats  # آمار کامل
         }
 
         return json.dumps(response_obj, ensure_ascii=False)
