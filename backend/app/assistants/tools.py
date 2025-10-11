@@ -272,21 +272,24 @@ class QueryKnowledgeBaseTool(BaseModel):
                     elif not self.size_preferences:
                         feature_close.append((score, chunk, price_status, diff, has_exact_size))
 
-            # Allocate near matches
+            # Allocate near matches - حداکثر 10 محصول
             max_total = 10
             num_exact = len(exact_matches)
             near_matches = []
             if num_exact < max_total:
-                remaining = min(max_total - num_exact, 5)
+                remaining = max_total - num_exact
+                # تخصیص 70% به محصولات نزدیک قیمتی و 30% به محصولات با سایز/ویژگی
                 price_alloc = max(1, int(remaining * 0.7))
                 size_feature_alloc = remaining - price_alloc
                 if self.size_preferences:
                     near_matches = price_close[:price_alloc] + size_close[:size_feature_alloc]
                 else:
                     near_matches = price_close[:price_alloc] + feature_close[:size_feature_alloc]
-                if len(near_matches) < 5 and feature_close:
-                    near_matches.extend(feature_close[:(5 - len(near_matches))])
-            elif num_exact == max_total:
+                # اگر هنوز جا داریم، محصولات بیشتری اضافه کن
+                if len(near_matches) < remaining and feature_close:
+                    additional_needed = remaining - len(near_matches)
+                    near_matches.extend(feature_close[:additional_needed])
+            elif num_exact >= max_total:
                 near_matches = []
 
             return exact_matches, near_matches
@@ -296,7 +299,7 @@ class QueryKnowledgeBaseTool(BaseModel):
         exact_matches, near_matches = await filter_chunks(top_chunks)
 
         # Smart fallback: if results are scarce, temporarily favor keyword (lower alpha) and widen recall (higher top_k)
-        if (len(exact_matches) + len(near_matches)) < 5:
+        if (len(exact_matches) + len(near_matches)) < 10:
             widened = await search_hybrid_db(
                 rdb,
                 query_vector,
@@ -418,8 +421,8 @@ class QueryKnowledgeBaseTool(BaseModel):
         exact_ranked = rank(exact_matches)
         near_ranked = rank(near_matches, with_status=True)
 
-        # نمایش حداکثری محصولات - بدون محدودیت سخت
-        def to_products(items, max_limit=50):  # افزایش حد حداکثر
+        # نمایش حداکثری محصولات - حداکثر 10 محصول
+        def to_products(items, max_limit=10):  # محدودیت به 10 محصول
             out = []
             seen = set()
             for _, chunk, status, diff, has_size in items:
@@ -438,29 +441,85 @@ class QueryKnowledgeBaseTool(BaseModel):
                     pass
                 out.append(prod)
                 seen.add(pid)
-                if len(out) >= max_limit:  # حد بالاتر برای نمایش بیشتر
+                if len(out) >= max_limit:  # محدودیت به 10 محصول
                     break
             return out
 
-        # نمایش حداکثری: ابتدا تمام محصولات دقیق، سپس تمام محصولات نزدیک
-        exact_products = to_products(exact_ranked, max_limit=50)  # افزایش حد
-        near_products = to_products(near_ranked, max_limit=50)  # نمایش تمام محصولات نزدیک
+        # نمایش حداکثری: ابتدا تمام محصولات دقیق، سپس محصولات نزدیک تا رسیدن به 10 محصول
+        # منطق: همه محصولات مرتبط را نمایش بده - هیچ محصولی را skip نکن
+        # تخصیص 70/30: 70% محصولات نزدیک قیمتی، 30% محصولات با سایز/ویژگی مشابه
         
-        # اگر محصولات دقیق کم هستند، محصولات نزدیک بیشتری اضافه کن
-        if len(exact_products) < 5 and len(near_products) > 0:
-            # تا 20 محصول نزدیک اضافه کن اگر محصولات دقیق کم هستند
-            additional_near = to_products(near_ranked[len(near_products):], max_limit=20)
-            near_products.extend(additional_near)
+        # ابتدا تمام محصولات دقیق را بگیر
+        exact_products = to_products(exact_ranked, max_limit=len(exact_ranked))  # همه محصولات دقیق
+        
+        # سپس محصولات نزدیک را بگیر تا به 10 محصول برسیم
+        remaining_slots = 10 - len(exact_products)
+        if remaining_slots > 0:
+            # تخصیص 70/30 برای محصولات نزدیک
+            price_close_count = int(remaining_slots * 0.7)  # 70% محصولات نزدیک قیمتی
+            size_feature_count = remaining_slots - price_close_count  # 30% محصولات با سایز/ویژگی
+            
+            # محصولات نزدیک قیمتی
+            price_close_products = []
+            # محصولات با سایز/ویژگی مشابه
+            size_feature_products = []
+            
+            # تقسیم محصولات نزدیک بر اساس نوع
+            for _, chunk, status, diff, has_size in near_ranked:
+                if len(price_close_products) < price_close_count and status in ["cheaper", "expensive"]:
+                    prod = product_from_chunk(chunk)
+                    prod["note"] = format_note(status, diff, has_size)
+                    price_close_products.append(prod)
+                elif len(size_feature_products) < size_feature_count and has_size:
+                    prod = product_from_chunk(chunk)
+                    prod["note"] = format_note(status, diff, has_size)
+                    size_feature_products.append(prod)
+            
+            # ترکیب محصولات نزدیک
+            near_products = price_close_products + size_feature_products
+        else:
+            near_products = []
 
         # ترکیب تمام محصولات برای نمایش حداکثری
         all_products = exact_products + near_products
+        
+        # اگر هنوز کمتر از 10 محصول داریم و محصولات نزدیک بیشتری وجود دارد، اضافه کن
+        if len(all_products) < 10 and len(near_ranked) > len(near_products):
+            additional_needed = 10 - len(all_products)
+            # از near_ranked محصولات بیشتری بگیر
+            additional_products = []
+            seen_ids = {p.get("product_id") or p.get("name") for p in all_products}
+            for _, chunk, status, diff, has_size in near_ranked:
+                if len(additional_products) >= additional_needed:
+                    break
+                meta = chunk.get("metadata", {})
+                pid = meta.get("product_id") or meta.get("name")
+                if pid not in seen_ids:
+                    prod = product_from_chunk(chunk)
+                    prod["note"] = format_note(status, diff, has_size)
+                    additional_products.append(prod)
+                    seen_ids.add(pid)
+            
+            all_products.extend(additional_products)
+            near_products.extend(additional_products)
+        
+        # نهایی کردن: حداکثر 10 محصول (اگر بیشتر از 10 تا یافت شد)
+        all_products = all_products[:10]
+        
+        # به‌روزرسانی آمار نهایی
+        exact_products = [p for p in all_products if p.get("reason_status") == "exact"]
+        near_products = [p for p in all_products if p.get("reason_status") != "exact"]
         
         # آمار کامل برای شفافیت
         stats = {
             "total_found": len(all_products),
             "exact_matches": len(exact_products),
             "near_matches": len(near_products),
-            "search_strategy": "maximal_display"  # نشان‌دهنده نمایش حداکثری
+            "max_display_limit": 10,  # حداکثر 10 محصول
+            "search_strategy": "maximal_display_10_products",  # نشان‌دهنده نمایش حداکثری 10 محصول
+            "display_logic": "exact_first_then_near_until_10",  # منطق نمایش: ابتدا دقیق، سپس نزدیک تا 10
+            "allocation_ratio": "70_30_price_size",  # تخصیص 70% قیمتی، 30% سایز/ویژگی
+            "no_skip_policy": True  # هیچ محصولی skip نمی‌شود
         }
 
         response_obj = {
@@ -474,7 +533,7 @@ class QueryKnowledgeBaseTool(BaseModel):
             },
             "exact": exact_products,
             "near": near_products,
-            "all_products": all_products,  # تمام محصولات در یک لیست
+            "all_products": all_products,  # تمام محصولات در یک لیست (حداکثر 10 محصول)
             "stats": stats  # آمار کامل
         }
 
