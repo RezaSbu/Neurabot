@@ -1,111 +1,249 @@
-# Technology Trends AI Chatbot
+````markdown
+# 🤖 Neurabot - AI-Powered RAG Chatbot
 
-This repository contains a **Retrieval-Augmented Generation (RAG) full-stack chatbot application** built with **Python, FastAPI, Redis, React and OpenAI's GPT-4o.** The chatbot specializes in answering questions about new technology trends, powered by the latest reports from leading institutions such as the World Bank, World Economic Forum, McKinsey, Deloitte, and OECD.
 
-The application is designed to be easily customizable, allowing you to **integrate your own data sources and adapt it to different use cases.**
+> **Retrieval-Augmented Generation (RAG) Full-Stack Chatbot**
+> A sophisticated AI chatbot that leverages your custom documents and institutional reports to provide intelligent, context-aware responses about technology trends and industry insights.
 
-You can access a [live demo of the RAG Chatbot application here](https://tech-trends-chatbot.codeawake.com).
+---
 
-For a detailed walkthrough of the code and the technologies used, check out this blog post: [Building an AI Chatbot Powered by Your Data](https://codeawake.com/blog/ai-chatbot).
+## 🌟 Live Demo
 
-## Structure
+| Platform | Link |
+| :--- | :--- |
+| **🚀 Vercel** | [**View Live Demo**](https://neurabot-sepia.vercel.app) |
+| **🚀 CodeAwake** | [**Alternative Demo**](https://tech-trends-chatbot.codeawake.com) |
 
-The repository is organized into two main folders:
+---
 
-- `backend/`: Contains the Python FastAPI backend code and a local Python version for testing.
-- `frontend/`: Contains the React frontend code. It uses Vite.js as the build tool and bundler.
+## 🎯 Overview
 
-## Installation
+Neurabot is a **full-stack application** combining **Large Language Models (LLMs)** with **custom document retrieval** (Vector Search). It is designed to ingest authoritative sources (PDFs, Reports) and answer complex queries with high factual accuracy.
 
-### Prerequisites ✅
+### 🏢 Data Sources Integration
+The current model is trained/indexed on reports from:
+* **World Bank** (Economic Data)
+* **World Economic Forum** (Global Trends)
+* **McKinsey & Deloitte** (Business Intelligence)
+* **OECD** (Social Data)
 
-- Python 3.11+.
-- Node.js 18+.
-- Poetry (Python package manager).
-- Redis Stack Server. Follow the [installation and running instructions](https://redis.io/docs/latest/operate/oss_and_stack/install/install-stack/). The application requires the RedisJSON and RediSearch modules, which Redis Stack Server includes. Alternatively, you can install Redis and add the required modules yourself.
+---
 
-### Backend
+## ✨ Key Features
 
-1. Navigate to the backend folder and install the Python dependencies using Poetry:
+### 🧠 Advanced AI Capabilities
+* **RAG Architecture:** Combines LLM reasoning with semantic document retrieval.
+* **Context-Aware:** Remembers previous turns in the conversation.
+* **Multi-Source:** Seamlessly integrates diverse institutional reports.
 
-    ```bash
-    cd backend
-    poetry install
-    ```
+### 📊 Data Management
+* **Vector Search:** Powered by **Redis Stack** for millisecond-latency retrieval.
+* **Document Support:** PDF, TXT, and DOCX ingestion.
+* **Export:** Download chat history as JSON.
 
-2. Create a `.env` file in the backend folder copying the `.env.example` file provided and set the required environment variable:
-    - `OPENAI_API_KEY`: Your OpenAI API key.
-  
-3. The application uses Pydantic Settings for configuration management. You can adjust the configuration defaults in `backend/app/config.py`, or set the configuration variables directly using environment variables.
+### 🎨 User Experience
+* **Modern UI:** Built with React & Vite (Dark/Light mode).
+* **Responsive:** Optimized for mobile and desktop.
 
-### Frontend
+---
 
-1. Navigate to the frontend folder and install the JavaScript dependencies:
+## 🏗️ Architecture
 
-    ```bash
-    cd frontend
-    npm install
-    ```
+```text
+Neurabot/
+├── 📂 backend/                 # FastAPI Application (Python)
+│   ├── app/
+│   │   ├── api/            # REST Endpoints
+│   │   ├── assistants/     # RAG & LLM Logic
+│   │   ├── loader.py       # Document Ingestion Script
+│   │   └── prompts/        # System Instructions
+│   ├── data/               # Local Document Storage
+│   └── pyproject.toml      # Poetry Dependencies
+│
+├── 📂 frontend/                # React Application (TypeScript)
+│   ├── src/
+│   │   ├── components/     # UI Components
+│   │   └── services/       # API Integration
+│   └── vite.config.ts      # Build Config
+│
+└── 🐳 docker-compose.yml       # Container Orchestration
+````
 
-2. Create a `.env.development` file in the frontend folder copying the `.env.example` file provided that includes the required environment variable:
-    - `VITE_API_URL`: The URL to connect to the backend API.
+-----
 
-## Running the Application
+## 🚀 Quick Start
 
-### Loading Source Documents
+### Prerequisites
 
-Before running the full-stack application, you need to load the source documents and build the knowledge base. Make sure Redis Stack Server is running before executing the loading script:
+  * **Python 3.11+** (Managed by Poetry)
+  * **Node.js 18+**
+  * **Redis Stack** (Must support `RedisJSON` & `RediSearch`)
+  * **OpenAI API Key**
+
+### 📦 Installation
+
+#### 1\. Clone Repository
+
+```bash
+git clone [https://github.com/RezaSbu/Neurabot.git](https://github.com/RezaSbu/Neurabot.git)
+cd Neurabot
+```
+
+#### 2\. Backend Setup
 
 ```bash
 cd backend
+
+# Install dependencies with Poetry
+poetry install
+
+# Configure Environment
+cp .env.example .env
+# Edit .env and add your OPENAI_API_KEY
+
+# Load/Index Documents into Redis
 poetry run load
+
+# Start Backend Server
+poetry run dev
 ```
 
-This script processes the documents in the `backend/data/docs` directory, creates vector embeddings, and stores them in the Redis database.
-
-You can **customize this chatbot with your own data sources:**
-1. Replace the existing PDF files in the `backend/data/docs` with your own data sources.
-2. If needed, adjust the `process_docs` function in `backend/app/loader.py` to handle different file formats.
-3. Adjust the assistant prompts in `backend/app/assistants/prompts.py` for your specific use case.
-4. Run the `poetry run load` script as shown above.
-
-### Full-Stack Application
-
-To run the full-stack chatbot application:
-
-1. Ensure Redis Stack Server is running.
-   
-2. Activate the virtual environment for the backend and start the backend server:
-
-    ```bash
-    cd backend
-    poetry shell
-    fastapi dev app/main.py
-    ```
-
-3. In a separate terminal, start the frontend server:
-
-    ```bash
-    cd frontend
-    npm run dev
-    ```
-
-4. Open your web browser and visit `http://localhost:3000` to access the application.
-
-### Local Application
-
-You can run the local Python application for testing in your console using the provided Poetry script:
+#### 3\. Frontend Setup
 
 ```bash
-cd backend
-poetry run local
+cd frontend
+
+# Install dependencies
+npm install
+
+# Configure Environment
+cp .env.example .env.development
+
+# Start Frontend Server
+npm run dev
 ```
 
-### Exporting Chats
+#### 4\. Access Application
 
-To export all conversation chats to a JSON file in the `backend/data` directory:
+  * **Frontend:** `http://localhost:3000`
+  * **Backend Docs:** `http://localhost:8000/docs`
+
+-----
+
+## ⚙️ Configuration
+
+### Backend Variables (`backend/.env`)
+
+```env
+OPENAI_API_KEY=sk-...
+REDIS_URL=redis://localhost:6379
+ENVIRONMENT=development
+LOG_LEVEL=INFO
+```
+
+### Frontend Variables (`frontend/.env.development`)
+
+```env
+VITE_API_URL=http://localhost:8000
+VITE_APP_NAME=Neurabot
+```
+
+-----
+
+## 🔧 Advanced Usage & Customization
+
+### 1\. Adding Custom Data
+
+To train the bot on your own data:
+
+1.  Place your `PDF` or `TXT` files in `backend/data/docs/`.
+2.  Run the ingestion script:
+    ```bash
+    poetry run load
+    ```
+
+### 2\. Modifying AI Behavior
+
+Edit `backend/app/assistants/prompts.py` to change the system persona:
+
+```python
+SYSTEM_PROMPT = """
+You are an expert Technical Consultant.
+Answer strictly based on the provided context.
+"""
+```
+
+### 3\. Model Tuning
+
+Adjust parameters in `backend/app/config.py`:
+
+```python
+MODEL_CONFIG = {
+    "model": "gpt-4",
+    "temperature": 0.1,  # Lower for more factual answers
+    "max_tokens": 2000
+}
+```
+
+-----
+
+## 🐳 Deployment (Docker)
+
+For production deployment using Docker Compose:
 
 ```bash
-cd backend
-poetry run export
+# Build and start services
+docker-compose up -d --build
+
+# Scale backend (optional)
+docker-compose up -d --scale backend=3
 ```
+
+**Production Configuration (`docker-compose.prod.yml`):**
+Ensure `REDIS_URL` points to the container name (`redis:6379`) and `ENVIRONMENT` is set to `production`.
+
+-----
+
+## 🧪 Testing
+
+| Component | Command |
+| :--- | :--- |
+| **Backend** | `cd backend && poetry run pytest` |
+| **Frontend** | `cd frontend && npm test` |
+| **API (Curl)** | `curl -X POST http://localhost:8000/chat ...` |
+
+-----
+
+## 🤝 Contributing
+
+1.  Fork the repository.
+2.  Create a feature branch (`git checkout -b feature/amazing-feature`).
+3.  Commit your changes.
+4.  Run tests (`poetry run pytest`).
+5.  Open a Pull Request.
+
+-----
+
+## 📈 Roadmap
+
+  * [ ] **Multi-Language Support:** Internationalization (i18n).
+  * [ ] **Voice Integration:** Speech-to-text and TTS.
+  * [ ] **Plugins:** Third-party tool integration.
+  * [ ] **Mobile App:** Native iOS/Android wrapper.
+
+-----
+
+## 📞 Support & Community
+
+  * **Issues:** [GitHub Issues](https://www.google.com/search?q=https://github.com/RezaSbu/Neurabot/issues)
+
+-----
+
+## 📄 License
+
+This project is licensed under the MIT License.
+
+-----
+
+*Built with ❤️ by [Reza Ahmadi](https://www.google.com/search?q=https://github.com/RezaSbu)*
+
